@@ -20,6 +20,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.net.InetSocketAddress;
+import java.text.MessageFormat;
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Collection;
@@ -56,10 +57,11 @@ import net.md_5.bungee.command.*;
 import net.md_5.bungee.config.YamlConfig;
 import net.md_5.bungee.log.LoggingOutputStream;
 import net.md_5.bungee.netty.PipelineUtils;
-import net.md_5.bungee.protocol.packet.DefinedPacket;
-import net.md_5.bungee.protocol.packet.Packet3Chat;
-import net.md_5.bungee.protocol.packet.PacketFAPluginMessage;
-import net.md_5.bungee.protocol.Vanilla;
+import net.md_5.bungee.protocol.DefinedPacket;
+import net.md_5.bungee.protocol.Protocol;
+import net.md_5.bungee.protocol.packet.Chat;
+import net.md_5.bungee.protocol.packet.PluginMessage;
+import net.md_5.bungee.query.RemoteQuery;
 import net.md_5.bungee.tab.Custom;
 import net.md_5.bungee.util.CaseInsensitiveMap;
 import org.fusesource.jansi.AnsiConsole;
@@ -81,7 +83,7 @@ public class BungeeCord extends ProxyServer
     /**
      * Localization bundle.
      */
-    public final ResourceBundle bundle = ResourceBundle.getBundle( "messages_en" );
+    public final ResourceBundle bundle = ResourceBundle.getBundle( "messages" );
     public final MultithreadEventLoopGroup eventLoops = new NioEventLoopGroup( 0, new ThreadFactoryBuilder().setNameFormat( "Netty IO Thread #%1$d" ).build() );
     /**
      * locations.yml save thread.
@@ -161,46 +163,6 @@ public class BungeeCord extends ProxyServer
     }
 
     /**
-     * Starts a new instance of BungeeCord.
-     *
-     * @param args command line arguments, currently none are used
-     * @throws Exception when the server cannot be started
-     */
-    public static void main(String[] args) throws Exception
-    {
-        if ( BungeeCord.class.getPackage().getSpecificationVersion() != null )
-        {
-            Calendar deadline = Calendar.getInstance();
-            deadline.add( Calendar.WEEK_OF_YEAR, 2 );
-            if ( Calendar.getInstance().after( new SimpleDateFormat( "yyyyMMdd" ).parse( BungeeCord.class.getPackage().getSpecificationVersion() ) ) )
-            {
-                System.err.println( "*** Warning, this build is outdated ***" );
-                System.err.println( "*** Please download a new build from http://ci.md-5.net/job/BungeeCord ***" );
-                System.err.println( "*** You will get NO support regarding this build ***" );
-                System.err.println( "*** Server will start in 30 seconds ***" );
-                Thread.sleep( TimeUnit.SECONDS.toMillis( 30 ) );
-            }
-        }
-
-        BungeeCord bungee = new BungeeCord();
-        ProxyServer.setInstance( bungee );
-        bungee.getLogger().info( "Enabled BungeeCord version " + bungee.getVersion() );
-        bungee.start();
-
-        while ( bungee.isRunning )
-        {
-            String line = bungee.getConsoleReader().readLine( ">" );
-            if ( line != null )
-            {
-                if ( !bungee.getPluginManager().dispatchCommand( ConsoleCommandSender.getInstance(), line ) )
-                {
-                    bungee.getConsole().sendMessage( ChatColor.RED + "Command not found" );
-                }
-            }
-        }
-    }
-
-    /**
      * Start this proxy instance by loading the configuration, plugins and
      * starting the connect thread.
      *
@@ -269,6 +231,26 @@ public class BungeeCord extends ProxyServer
                     .group( eventLoops )
                     .localAddress( info.getHost() )
                     .bind().addListener( listener );
+
+            if ( info.isQueryEnabled() )
+            {
+                ChannelFutureListener bindListener = new ChannelFutureListener()
+                {
+                    @Override
+                    public void operationComplete(ChannelFuture future) throws Exception
+                    {
+                        if ( future.isSuccess() )
+                        {
+                            listeners.add( future.channel() );
+                            getLogger().info( "Started query on " + future.channel().localAddress() );
+                        } else
+                        {
+                            getLogger().log( Level.WARNING, "Could not bind to host " + future.channel().remoteAddress(), future.cause() );
+                        }
+                    }
+                };
+                new RemoteQuery( this, info ).start( new InetSocketAddress( info.getHost().getAddress(), info.getQueryPort() ), eventLoops, bindListener );
+            }
         }
     }
 
@@ -387,12 +369,12 @@ public class BungeeCord extends ProxyServer
     }
 
     @Override
-    public String getTranslation(String name)
+    public String getTranslation(String name, Object... args)
     {
         String translation = "<translation '" + name + "' missing>";
         try
         {
-            translation = bundle.getString( name );
+            translation = MessageFormat.format( bundle.getString( name ), args );
         } catch ( MissingResourceException ex )
         {
         }
@@ -465,21 +447,21 @@ public class BungeeCord extends ProxyServer
         return Collections.unmodifiableCollection( pluginChannels );
     }
 
-    public PacketFAPluginMessage registerChannels()
+    public PluginMessage registerChannels()
     {
-        return new PacketFAPluginMessage( "REGISTER", Util.format( pluginChannels, "\00" ).getBytes() );
+        return new PluginMessage( "REGISTER", Util.format( pluginChannels, "\00" ).getBytes() );
     }
 
     @Override
-    public byte getProtocolVersion()
+    public int getProtocolVersion()
     {
-        return Vanilla.PROTOCOL_VERSION;
+        return Protocol.PROTOCOL_VERSION;
     }
 
     @Override
     public String getGameVersion()
     {
-        return Vanilla.GAME_VERSION;
+        return Protocol.MINECRAFT_VERSION;
     }
 
     @Override
@@ -500,7 +482,7 @@ public class BungeeCord extends ProxyServer
         getConsole().sendMessage( message );
         // TODO: Here too
         String encoded = BungeeCord.getInstance().gson.toJson( message );
-        broadcast( new Packet3Chat( "{\"text\":" + encoded + "}" ) );
+        broadcast( new Chat( "{\"text\":" + encoded + "}" ) );
     }
 
     public void addConnection(UserConnection con)
