@@ -2,21 +2,30 @@ package net.md_5.bungee;
 
 import com.google.common.base.Preconditions;
 import gnu.trove.set.hash.THashSet;
+import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelFutureListener;
+import io.netty.channel.ChannelInitializer;
+import io.netty.channel.ChannelOption;
+import io.netty.channel.socket.nio.NioSocketChannel;
 import java.net.InetSocketAddress;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
-import java.util.Queue;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.logging.Level;
+import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.Synchronized;
+import net.md_5.bungee.api.ChatColor;
 import net.md_5.bungee.api.ProxyServer;
 import net.md_5.bungee.api.config.ServerInfo;
 import net.md_5.bungee.api.connection.PendingConnection;
 import net.md_5.bungee.api.connection.ProxiedPlayer;
-import net.md_5.bungee.api.event.PlayerDisconnectEvent;
+import net.md_5.bungee.api.event.ServerConnectEvent;
+import net.md_5.bungee.netty.HandlerBoss;
+import net.md_5.bungee.netty.PipelineUtils;
 import net.md_5.bungee.packet.*;
 
 public final class UserConnection implements ProxiedPlayer
@@ -24,13 +33,13 @@ public final class UserConnection implements ProxiedPlayer
 
     public final Packet2Handshake handshake;
     private final ProxyServer bungee;
-    private final Channel ch;
+    public final Channel ch;
     final Packet1Login forgeLogin;
     final List<PacketFAPluginMessage> loginMessages;
-    public Queue<DefinedPacket> packetQueue = new ConcurrentLinkedQueue<>();
     @Getter
     private final PendingConnection pendingConnection;
     @Getter
+    @Setter(AccessLevel.PACKAGE)
     private ServerConnection server;
     // reconnect stuff
     public int clientEntityId;
@@ -51,6 +60,7 @@ public final class UserConnection implements ProxiedPlayer
     private final Object permMutex = new Object();
     @Getter
     private final Object switchMutex = new Object();
+    public PacketCCSettings settings;
 
     public UserConnection(BungeeCord bungee, Channel channel, PendingConnection pendingConnection, Packet2Handshake handshake, Packet1Login forgeLogin, List<PacketFAPluginMessage> loginMessages)
     {
@@ -60,7 +70,8 @@ public final class UserConnection implements ProxiedPlayer
         this.pendingConnection = pendingConnection;
         this.forgeLogin = forgeLogin;
         this.loginMessages = loginMessages;
-
+        this.name = handshake.username;
+        this.displayName = name;
 
         Collection<String> g = bungee.getConfigurationAdapter().getGroups( name );
         for ( String s : g )
@@ -85,6 +96,54 @@ public final class UserConnection implements ProxiedPlayer
     @Override
     public void connect(ServerInfo target)
     {
+        connect( target, false );
+    }
+
+    public void connect(ServerInfo info, final boolean retry)
+    {
+        ServerConnectEvent event = new ServerConnectEvent( this, info );
+        ProxyServer.getInstance().getPluginManager().callEvent( event );
+        final ServerInfo target = event.getTarget(); // Update in case the event changed target
+        new Bootstrap()
+                .channel( NioSocketChannel.class )
+                .group( BungeeCord.getInstance().eventLoops )
+                .handler( new ChannelInitializer()
+        {
+            @Override
+            protected void initChannel(Channel ch) throws Exception
+            {
+                PipelineUtils.BASE.initChannel( ch );
+                ch.pipeline().get( HandlerBoss.class ).setHandler( new ServerConnector( bungee, UserConnection.this, target ) );
+            }
+        } )
+                .option( ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000 ) // TODO: Configurable
+                .remoteAddress( target.getAddress() )
+                .connect().addListener( new ChannelFutureListener()
+        {
+            @Override
+            public void operationComplete(ChannelFuture future) throws Exception
+            {
+                if ( !future.isSuccess() )
+                {
+                    future.channel().close();
+                    ServerInfo def = ProxyServer.getInstance().getServers().get( getPendingConnection().getListener().getDefaultServer() );
+                    if ( retry && !target.equals( def ) )
+                    {
+                        sendMessage( ChatColor.RED + "Could not connect to target server, you have been moved to the default server" );
+                        connect( def, false );
+                    } else
+                    {
+                        if ( server == null )
+                        {
+                            disconnect( "Server down, could not connect to default! " + future.cause().getClass().getName() );
+                        } else
+                        {
+                            sendMessage( ChatColor.RED + "Could not connect to target server: " + future.cause().getClass().getName() );
+                        }
+                    }
+                }
+            }
+        } );
     }
 
     @Override
@@ -92,27 +151,27 @@ public final class UserConnection implements ProxiedPlayer
     {
         if ( ch.isActive() )
         {
-            PlayerDisconnectEvent event = new PlayerDisconnectEvent( this );
-            bungee.getPluginManager().callEvent( event );
-            bungee.getTabListHandler().onDisconnect( this );
-            bungee.getPlayers().remove( this );
-
+            bungee.getLogger().log( Level.INFO, "[" + getName() + "] disconnected with: " + reason );
             ch.write( new PacketFFKick( reason ) );
             ch.close();
-
             if ( server != null )
             {
-                server.getInfo().removePlayer( this );
                 server.disconnect( "Quitting" );
-                bungee.getReconnectHandler().setServer( this );
             }
         }
     }
 
     @Override
+    public void chat(String message)
+    {
+        Preconditions.checkState( server != null, "Not connected to server" );
+        server.getCh().write( new Packet3Chat( message ) );
+    }
+
+    @Override
     public void sendMessage(String message)
     {
-        packetQueue.add( new Packet3Chat( message ) );
+        ch.write( new Packet3Chat( message ) );
     }
 
     @Override

@@ -2,18 +2,18 @@ package net.md_5.bungee;
 
 import com.google.common.base.Preconditions;
 import io.netty.channel.Channel;
-import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelFutureListener;
 import java.util.Queue;
 import lombok.RequiredArgsConstructor;
 import net.md_5.bungee.api.ChatColor;
 import net.md_5.bungee.api.ProxyServer;
 import net.md_5.bungee.api.config.ServerInfo;
-import net.md_5.bungee.api.event.ServerConnectEvent;
 import net.md_5.bungee.api.event.ServerConnectedEvent;
-import net.md_5.bungee.netty.ChannelBootstrapper;
+import net.md_5.bungee.connection.CancelSendSignal;
+import net.md_5.bungee.connection.DownstreamBridge;
+import net.md_5.bungee.netty.HandlerBoss;
 import net.md_5.bungee.packet.DefinedPacket;
 import net.md_5.bungee.packet.Packet1Login;
+import net.md_5.bungee.packet.Packet2Handshake;
 import net.md_5.bungee.packet.Packet9Respawn;
 import net.md_5.bungee.packet.PacketCDClientStatus;
 import net.md_5.bungee.packet.PacketFDEncryptionRequest;
@@ -25,7 +25,7 @@ public class ServerConnector extends PacketHandler
 {
 
     private final ProxyServer bungee;
-    private final Channel ch;
+    private Channel ch;
     private final UserConnection user;
     private final ServerInfo target;
     private State thisState = State.ENCRYPT_REQUEST;
@@ -34,6 +34,15 @@ public class ServerConnector extends PacketHandler
     {
 
         ENCRYPT_REQUEST, LOGIN, FINISHED;
+    }
+
+    @Override
+    public void connected(Channel channel) throws Exception
+    {
+        this.ch = channel;
+        // TODO: Fix this crap
+        channel.write( new Packet2Handshake( user.handshake.procolVersion, user.handshake.username, user.handshake.host, user.handshake.port ) );
+        channel.write( PacketCDClientStatus.CLIENT_LOGIN );
     }
 
     @Override
@@ -47,11 +56,17 @@ public class ServerConnector extends PacketHandler
 
         ch.write( BungeeCord.getInstance().registerChannels() );
 
+        // TODO: Race conditions with many connects
         Queue<DefinedPacket> packetQueue = ( (BungeeServerInfo) target ).getPacketQueue();
         while ( !packetQueue.isEmpty() )
         {
             ch.write( packetQueue.poll() );
         }
+        if ( user.settings != null )
+        {
+            ch.write( user.settings );
+        }
+
 
         synchronized ( user.getSwitchMutex() )
         {
@@ -71,7 +86,7 @@ public class ServerConnector extends PacketHandler
                         login.difficulty,
                         login.unused,
                         (byte) user.getPendingConnection().getListener().getTabListSize() );
-                ch.write( modLogin );
+                user.ch.write( modLogin );
                 ch.write( BungeeCord.getInstance().registerChannels() );
             } else
             {
@@ -80,17 +95,31 @@ public class ServerConnector extends PacketHandler
                 user.sendPacket( Packet9Respawn.DIM2_SWITCH );
 
                 user.serverEntityId = login.entityId;
-                ch.write( new Packet9Respawn( login.dimension, login.difficulty, login.gameMode, (short) 256, login.levelType ) );
+                user.ch.write( new Packet9Respawn( login.dimension, login.difficulty, login.gameMode, (short) 256, login.levelType ) );
 
-                // Add to new server
-                target.addPlayer( user );
                 // Remove from old servers
+                user.getServer().setObsolete( true );
                 user.getServer().disconnect( "Quitting" );
-                user.getServer().getInfo().removePlayer( user );
             }
+
+            // TODO: Fix this?
+            if ( !user.ch.isActive() )
+            {
+                server.disconnect( "Quitting" );
+                throw new IllegalStateException( "No client connected for pending server!" );
+            }
+
+            // Add to new server
+            // TODO: Move this to the connected() method of DownstreamBridge
+            target.addPlayer( user );
+
+            user.setServer( server );
+            ch.pipeline().get( HandlerBoss.class ).setHandler( new DownstreamBridge( bungee, user, server ) );
         }
 
         thisState = State.FINISHED;
+
+        throw new CancelSendSignal();
     }
 
     @Override
@@ -103,35 +132,19 @@ public class ServerConnector extends PacketHandler
     @Override
     public void handle(PacketFFKick kick) throws Exception
     {
-        throw new KickException( kick.message );
+        String message = ChatColor.RED + "Kicked whilst connecting to " + target.getName() + ": " + kick.message;
+        if ( user.getServer() == null )
+        {
+            user.disconnect( message );
+        } else
+        {
+            user.sendMessage( message );
+        }
     }
 
-    public static void connect(final UserConnection user, ServerInfo info, final boolean retry)
+    @Override
+    public String toString()
     {
-        ServerConnectEvent event = new ServerConnectEvent( user, info );
-        ProxyServer.getInstance().getPluginManager().callEvent( event );
-        final ServerInfo target = event.getTarget(); // Update in case the event changed target
-
-        ChannelBootstrapper.CLIENT.connectClient( info.getAddress() ).addListener( new ChannelFutureListener()
-        {
-            @Override
-            public void operationComplete(ChannelFuture future) throws Exception
-            {
-                if ( future.isSuccess() )
-                {
-                    future.channel().write( user.handshake );
-                    future.channel().write( PacketCDClientStatus.CLIENT_LOGIN );
-                } else
-                {
-                    future.channel().close();
-                    ServerInfo def = ProxyServer.getInstance().getServers().get( user.getPendingConnection().getListener().getDefaultServer() );
-                    if ( retry && !target.equals( def ) )
-                    {
-                        user.sendMessage( ChatColor.RED + "Could not connect to target server, you have been moved to the default server" );
-                        connect( user, def, false );
-                    }
-                }
-            }
-        } ).channel();
+        return "[" + user.getName() + "] <-> ServerConnector [" + target.getName() + "]";
     }
 }

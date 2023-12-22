@@ -9,6 +9,10 @@ import lombok.ToString;
 public class PacketCDClientStatus extends DefinedPacket
 {
 
+    /**
+     * Represents the packet the client sends to the server when it is ready to
+     * login.
+     */
     public static PacketCDClientStatus CLIENT_LOGIN = new PacketCDClientStatus( (byte) 0 );
 
     /**
@@ -22,7 +26,7 @@ public class PacketCDClientStatus extends DefinedPacket
         writeByte( payload );
     }
 
-    public PacketCDClientStatus(ByteBuf buf)
+    PacketCDClientStatus(byte[] buf)
     {
         super( 0xCD, buf );
     }

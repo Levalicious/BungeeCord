@@ -6,7 +6,7 @@
     <parent>
         <groupId>net.md-5</groupId>
         <artifactId>bungeecord-parent</artifactId>
-        <version>1.4.7-SNAPSHOT</version>
+        <version>1.5-SNAPSHOT</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -22,7 +22,7 @@
         <dependency>
             <groupId>io.netty</groupId>
             <artifactId>netty-all</artifactId>
-            <version>4.0.0.Beta2</version>
+            <version>4.0.0.Beta3-SNAPSHOT</version>
         </dependency>
         <dependency>
             <groupId>net.md-5</groupId>
@@ -42,13 +42,21 @@
         <dependency>
             <groupId>mysql</groupId>
             <artifactId>mysql-connector-java</artifactId>
-            <version>5.1.22</version>
+            <version>5.1.24</version>
         </dependency>
     </dependencies>
 
     <build>
         <finalName>BungeeCord</finalName>
         <plugins>
+            <plugin>
+                <!-- Don't deploy proxy to maven repo, only APIs -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-deploy-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
@@ -85,7 +93,6 @@
                             </excludes>
                         </filter>
                     </filters>
-                    <finalName>${project.build.finalName}-shaded</finalName>
                 </configuration>
             </plugin>
         </plugins>

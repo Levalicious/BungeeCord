@@ -4,19 +4,16 @@ import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelException;
-import io.netty.channel.ChannelInitializer;
-import io.netty.channel.ChannelOption;
-import io.netty.channel.EventLoopGroup;
 import io.netty.channel.MultithreadEventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
-import io.netty.handler.timeout.ReadTimeoutHandler;
+import io.netty.channel.socket.nio.NioServerSocketChannel;
 import net.md_5.bungee.config.Configuration;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.InetSocketAddress;
-import java.net.Socket;
+import java.util.Calendar;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
@@ -31,6 +28,7 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.Synchronized;
 import static net.md_5.bungee.Logger.$;
+import net.md_5.bungee.api.CommandSender;
 import net.md_5.bungee.api.ProxyServer;
 import net.md_5.bungee.api.ReconnectHandler;
 import net.md_5.bungee.api.TabListHandler;
@@ -43,9 +41,7 @@ import net.md_5.bungee.api.plugin.Plugin;
 import net.md_5.bungee.api.plugin.PluginManager;
 import net.md_5.bungee.command.*;
 import net.md_5.bungee.config.YamlConfig;
-import net.md_5.bungee.netty.ChannelBootstrapper;
-import net.md_5.bungee.netty.HandlerBoss;
-import net.md_5.bungee.netty.PacketDecoder;
+import net.md_5.bungee.netty.PipelineUtils;
 import net.md_5.bungee.packet.DefinedPacket;
 import net.md_5.bungee.packet.PacketFAPluginMessage;
 
@@ -58,11 +54,11 @@ public class BungeeCord extends ProxyServer
     /**
      * Server protocol version.
      */
-    public static final byte PROTOCOL_VERSION = 51;
+    public static final byte PROTOCOL_VERSION = 60;
     /**
      * Server game version.
      */
-    public static final String GAME_VERSION = "1.4.6";
+    public static final String GAME_VERSION = "1.5";
     /**
      * Current operation state.
      */
@@ -129,10 +125,21 @@ public class BungeeCord extends ProxyServer
      * Starts a new instance of BungeeCord.
      *
      * @param args command line arguments, currently none are used
-     * @throws IOException when the server cannot be started
+     * @throws Exception when the server cannot be started
      */
-    public static void main(String[] args) throws IOException
+    public static void main(String[] args) throws Exception
     {
+        Calendar deadline = Calendar.getInstance();
+        deadline.set( 2013, 3, 31 ); // year, month, date
+        if ( Calendar.getInstance().after( deadline ) )
+        {
+            System.err.println( "*** Warning, this build is outdated ***" );
+            System.err.println( "*** Please download a new build from http://ci.md-5.net/job/BungeeCord ***" );
+            System.err.println( "*** You will get NO support regarding this build ***" );
+            System.err.println( "*** Server will start in 15 seconds ***" );
+            Thread.sleep( TimeUnit.SECONDS.toMillis( 15 ) );
+        }
+
         BungeeCord bungee = new BungeeCord();
         ProxyServer.setInstance( bungee );
         $().info( "Enabled BungeeCord version " + bungee.getVersion() );
@@ -193,9 +200,11 @@ public class BungeeCord extends ProxyServer
         for ( ListenerInfo info : config.getListeners() )
         {
             Channel server = new ServerBootstrap()
-                    .childHandler( ChannelBootstrapper.SERVER )
-                    .localAddress( info.getHost() )
+                    .channel( NioServerSocketChannel.class )
+                    .childAttr( PipelineUtils.LISTENER, info )
+                    .childHandler( PipelineUtils.SERVER_CHILD )
                     .group( eventLoops )
+                    .localAddress( info.getHost() )
                     .bind().channel();
             listeners.add( server );
 
@@ -259,7 +268,7 @@ public class BungeeCord extends ProxyServer
     {
         for ( UserConnection con : connections.values() )
         {
-            con.packetQueue.add( packet );
+            con.sendPacket( packet );
         }
     }
 
@@ -359,8 +368,14 @@ public class BungeeCord extends ProxyServer
     }
 
     @Override
-    public ServerInfo constructServerInfo(String name, InetSocketAddress address)
+    public ServerInfo constructServerInfo(String name, InetSocketAddress address, boolean restricted)
     {
-        return new BungeeServerInfo( name, address );
+        return new BungeeServerInfo( name, address, restricted );
+    }
+
+    @Override
+    public CommandSender getConsole()
+    {
+        return ConsoleCommandSender.getInstance();
     }
 }

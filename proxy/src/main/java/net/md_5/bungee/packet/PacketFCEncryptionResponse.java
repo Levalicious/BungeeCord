@@ -1,6 +1,5 @@
 package net.md_5.bungee.packet;
 
-import io.netty.buffer.ByteBuf;
 import lombok.EqualsAndHashCode;
 import lombok.ToString;
 
@@ -24,9 +23,11 @@ public class PacketFCEncryptionResponse extends DefinedPacket
         super( 0xFC );
         writeArray( sharedSecret );
         writeArray( verifyToken );
+        this.sharedSecret = sharedSecret;
+        this.verifyToken = verifyToken;
     }
 
-    public PacketFCEncryptionResponse(ByteBuf buf)
+    PacketFCEncryptionResponse(byte[] buf)
     {
         super( 0xFC, buf );
         this.sharedSecret = readArray();
