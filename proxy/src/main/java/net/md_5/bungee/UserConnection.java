@@ -1,45 +1,68 @@
 package net.md_5.bungee;
 
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableMap;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
-import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.util.internal.PlatformDependent;
 import java.net.InetSocketAddress;
+import java.net.SocketAddress;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Queue;
+import java.util.UUID;
 import java.util.logging.Level;
 import lombok.Getter;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
+import net.md_5.bungee.api.Callback;
+import net.md_5.bungee.api.ChatMessageType;
 import net.md_5.bungee.api.ProxyServer;
+import net.md_5.bungee.api.ServerConnectRequest;
+import net.md_5.bungee.api.SkinConfiguration;
+import net.md_5.bungee.api.Title;
+import net.md_5.bungee.api.chat.BaseComponent;
+import net.md_5.bungee.api.chat.TextComponent;
 import net.md_5.bungee.api.config.ServerInfo;
 import net.md_5.bungee.api.connection.ProxiedPlayer;
 import net.md_5.bungee.api.event.PermissionCheckEvent;
 import net.md_5.bungee.api.event.ServerConnectEvent;
 import net.md_5.bungee.api.score.Scoreboard;
-import net.md_5.bungee.api.tab.TabListHandler;
+import net.md_5.bungee.chat.ComponentSerializer;
 import net.md_5.bungee.connection.InitialHandler;
+import net.md_5.bungee.entitymap.EntityMap;
+import net.md_5.bungee.forge.ForgeClientHandler;
+import net.md_5.bungee.forge.ForgeConstants;
+import net.md_5.bungee.forge.ForgeServerHandler;
 import net.md_5.bungee.netty.ChannelWrapper;
 import net.md_5.bungee.netty.HandlerBoss;
-import net.md_5.bungee.protocol.PacketWrapper;
 import net.md_5.bungee.netty.PipelineUtils;
 import net.md_5.bungee.protocol.DefinedPacket;
 import net.md_5.bungee.protocol.MinecraftDecoder;
 import net.md_5.bungee.protocol.MinecraftEncoder;
+import net.md_5.bungee.protocol.PacketWrapper;
 import net.md_5.bungee.protocol.Protocol;
+import net.md_5.bungee.protocol.ProtocolConstants;
 import net.md_5.bungee.protocol.packet.Chat;
 import net.md_5.bungee.protocol.packet.ClientSettings;
-import net.md_5.bungee.protocol.packet.PluginMessage;
 import net.md_5.bungee.protocol.packet.Kick;
+import net.md_5.bungee.protocol.packet.PlayerListHeaderFooter;
+import net.md_5.bungee.protocol.packet.PluginMessage;
+import net.md_5.bungee.protocol.packet.SetCompression;
+import net.md_5.bungee.tab.ServerUnique;
+import net.md_5.bungee.tab.TabList;
 import net.md_5.bungee.util.CaseInsensitiveSet;
+import net.md_5.bungee.util.ChatComponentTransformer;
 
 @RequiredArgsConstructor
 public final class UserConnection implements ProxiedPlayer
@@ -60,15 +83,14 @@ public final class UserConnection implements ProxiedPlayer
     @Setter
     private ServerConnection server;
     @Getter
-    private final Object switchMutex = new Object();
+    @Setter
+    private int dimension;
+    @Getter
+    @Setter
+    private boolean dimensionChange = true;
     @Getter
     private final Collection<ServerInfo> pendingConnects = new HashSet<>();
     /*========================================================================*/
-    @Getter
-    private TabListHandler tabList;
-    @Getter
-    @Setter
-    private int sentPingId;
     @Getter
     @Setter
     private long sentPingTime;
@@ -78,6 +100,16 @@ public final class UserConnection implements ProxiedPlayer
     @Getter
     @Setter
     private ServerInfo reconnectServer;
+    @Getter
+    private TabList tabListHandler;
+    @Getter
+    @Setter
+    private int gamemode;
+    @Getter
+    private int compressionThreshold = -1;
+    // Used for trying multiple servers in order
+    @Setter
+    private Queue<String> serverJoinQueue;
     /*========================================================================*/
     private final Collection<String> groups = new CaseInsensitiveSet();
     private final Collection<String> permissions = new CaseInsensitiveSet();
@@ -89,13 +121,24 @@ public final class UserConnection implements ProxiedPlayer
     @Setter
     private int serverEntityId;
     @Getter
-    @Setter
     private ClientSettings settings;
     @Getter
     private final Scoreboard serverSentScoreboard = new Scoreboard();
+    @Getter
+    private final Collection<UUID> sentBossBars = new HashSet<>();
     /*========================================================================*/
     @Getter
     private String displayName;
+    @Getter
+    private EntityMap entityRewrite;
+    private Locale locale;
+    /*========================================================================*/
+    @Getter
+    @Setter
+    private ForgeClientHandler forgeClientHandler;
+    @Getter
+    @Setter
+    private ForgeServerHandler forgeServerHandler;
     /*========================================================================*/
     private final Unsafe unsafe = new Unsafe()
     {
@@ -108,28 +151,23 @@ public final class UserConnection implements ProxiedPlayer
 
     public void init()
     {
+        this.entityRewrite = EntityMap.getEntityMap( getPendingConnection().getVersion() );
+
         this.displayName = name;
-        try
-        {
-            this.tabList = getPendingConnection().getListener().getTabList().getDeclaredConstructor().newInstance();
-        } catch ( ReflectiveOperationException ex )
-        {
-            throw new RuntimeException( ex );
-        }
-        this.tabList.init( this );
+
+        tabListHandler = new ServerUnique( this );
 
         Collection<String> g = bungee.getConfigurationAdapter().getGroups( name );
+        g.addAll( bungee.getConfigurationAdapter().getGroups( getUniqueId().toString() ) );
         for ( String s : g )
         {
             addGroups( s );
         }
-    }
 
-    @Override
-    public void setTabList(TabListHandler tabList)
-    {
-        tabList.init( this );
-        this.tabList = tabList;
+        forgeClientHandler = new ForgeClientHandler( this );
+
+        // Set whether the connection has a 1.8 FML marker in the handshake.
+        forgeClientHandler.setFmlTokenInHandshake( this.getPendingConnection().getExtraDataInHandshake().contains( ForgeConstants.FML_HANDSHAKE_TOKEN ) );
     }
 
     public void sendPacket(PacketWrapper packet)
@@ -147,37 +185,110 @@ public final class UserConnection implements ProxiedPlayer
     public void setDisplayName(String name)
     {
         Preconditions.checkNotNull( name, "displayName" );
-        Preconditions.checkArgument( name.length() <= 16, "Display name cannot be longer than 16 characters" );
-        getTabList().onDisconnect();
         displayName = name;
-        getTabList().onConnect();
     }
 
     @Override
     public void connect(ServerInfo target)
     {
-        connect( target, false );
+        connect( target, null, ServerConnectEvent.Reason.PLUGIN );
     }
 
-    void sendDimensionSwitch()
+    @Override
+    public void connect(ServerInfo target, ServerConnectEvent.Reason reason)
     {
-        unsafe().sendPacket( PacketConstants.DIM1_SWITCH );
-        unsafe().sendPacket( PacketConstants.DIM2_SWITCH );
+        connect( target, null, false, reason );
     }
 
+    @Override
+    public void connect(ServerInfo target, Callback<Boolean> callback)
+    {
+        connect( target, callback, false, ServerConnectEvent.Reason.PLUGIN );
+    }
+
+    @Override
+    public void connect(ServerInfo target, Callback<Boolean> callback, ServerConnectEvent.Reason reason)
+    {
+        connect( target, callback, false, reason );
+    }
+
+    @Deprecated
     public void connectNow(ServerInfo target)
     {
-        sendDimensionSwitch();
-        connect( target );
+        connectNow( target, ServerConnectEvent.Reason.UNKNOWN );
     }
 
-    public void connect(ServerInfo info, final boolean retry)
+    public void connectNow(ServerInfo target, ServerConnectEvent.Reason reason)
+    {
+        dimensionChange = true;
+        connect( target, reason );
+    }
+
+    public ServerInfo updateAndGetNextServer(ServerInfo currentTarget)
+    {
+        if ( serverJoinQueue == null )
+        {
+            serverJoinQueue = new LinkedList<>( getPendingConnection().getListener().getServerPriority() );
+        }
+
+        ServerInfo next = null;
+        while ( !serverJoinQueue.isEmpty() )
+        {
+            ServerInfo candidate = ProxyServer.getInstance().getServerInfo( serverJoinQueue.remove() );
+            if ( !Objects.equals( currentTarget, candidate ) )
+            {
+                next = candidate;
+                break;
+            }
+        }
+
+        return next;
+    }
+
+    public void connect(ServerInfo info, final Callback<Boolean> callback, final boolean retry)
+    {
+        connect( info, callback, retry, ServerConnectEvent.Reason.PLUGIN );
+    }
+
+    public void connect(ServerInfo info, final Callback<Boolean> callback, final boolean retry, ServerConnectEvent.Reason reason)
     {
         Preconditions.checkNotNull( info, "info" );
 
-        ServerConnectEvent event = new ServerConnectEvent( this, info );
+        ServerConnectRequest.Builder builder = ServerConnectRequest.builder().retry( retry ).reason( reason ).target( info );
+        if ( callback != null )
+        {
+            // Convert the Callback<Boolean> to be compatible with Callback<Result> from ServerConnectRequest.
+            builder.callback( new Callback<ServerConnectRequest.Result>()
+            {
+                @Override
+                public void done(ServerConnectRequest.Result result, Throwable error)
+                {
+                    callback.done( ( result == ServerConnectRequest.Result.SUCCESS ) ? Boolean.TRUE : Boolean.FALSE, error );
+                }
+            } );
+        }
+
+        connect( builder.build() );
+    }
+
+    @Override
+    public void connect(final ServerConnectRequest request)
+    {
+        Preconditions.checkNotNull( request, "request" );
+
+        final Callback<ServerConnectRequest.Result> callback = request.getCallback();
+        ServerConnectEvent event = new ServerConnectEvent( this, request.getTarget(), request.getReason() );
         if ( bungee.getPluginManager().callEvent( event ).isCancelled() )
         {
+            if ( callback != null )
+            {
+                callback.done( ServerConnectRequest.Result.EVENT_CANCEL, null );
+            }
+
+            if ( getServer() == null && !ch.isClosing() )
+            {
+                throw new IllegalStateException( "Cancelled ServerConnectEvent with no server or disconnect." );
+            }
             return;
         }
 
@@ -185,11 +296,21 @@ public final class UserConnection implements ProxiedPlayer
 
         if ( getServer() != null && Objects.equals( getServer().getInfo(), target ) )
         {
+            if ( callback != null )
+            {
+                callback.done( ServerConnectRequest.Result.ALREADY_CONNECTED, null );
+            }
+
             sendMessage( bungee.getTranslation( "already_connected" ) );
             return;
         }
         if ( pendingConnects.contains( target ) )
         {
+            if ( callback != null )
+            {
+                callback.done( ServerConnectRequest.Result.ALREADY_CONNECTING, null );
+            }
+
             sendMessage( bungee.getTranslation( "already_connecting" ) );
             return;
         }
@@ -202,47 +323,50 @@ public final class UserConnection implements ProxiedPlayer
             protected void initChannel(Channel ch) throws Exception
             {
                 PipelineUtils.BASE.initChannel( ch );
-                ch.pipeline().addAfter( PipelineUtils.FRAME_DECODER, PipelineUtils.PACKET_DECODER, new MinecraftDecoder( Protocol.HANDSHAKE, false ) );
-                ch.pipeline().addAfter( PipelineUtils.FRAME_PREPENDER, PipelineUtils.PACKET_ENCODER, new MinecraftEncoder( Protocol.HANDSHAKE, false ) );
+                ch.pipeline().addAfter( PipelineUtils.FRAME_DECODER, PipelineUtils.PACKET_DECODER, new MinecraftDecoder( Protocol.HANDSHAKE, false, getPendingConnection().getVersion() ) );
+                ch.pipeline().addAfter( PipelineUtils.FRAME_PREPENDER, PipelineUtils.PACKET_ENCODER, new MinecraftEncoder( Protocol.HANDSHAKE, false, getPendingConnection().getVersion() ) );
                 ch.pipeline().get( HandlerBoss.class ).setHandler( new ServerConnector( bungee, UserConnection.this, target ) );
             }
         };
         ChannelFutureListener listener = new ChannelFutureListener()
         {
             @Override
+            @SuppressWarnings("ThrowableResultIgnored")
             public void operationComplete(ChannelFuture future) throws Exception
             {
+                if ( callback != null )
+                {
+                    callback.done( ( future.isSuccess() ) ? ServerConnectRequest.Result.SUCCESS : ServerConnectRequest.Result.FAIL, future.cause() );
+                }
+
                 if ( !future.isSuccess() )
                 {
                     future.channel().close();
                     pendingConnects.remove( target );
 
-                    ServerInfo def = ProxyServer.getInstance().getServers().get( getPendingConnection().getListener().getFallbackServer() );
-                    if ( retry && target != def && ( getServer() == null || def != getServer().getInfo() ) )
+                    ServerInfo def = updateAndGetNextServer( target );
+                    if ( request.isRetry() && def != null && ( getServer() == null || def != getServer().getInfo() ) )
                     {
                         sendMessage( bungee.getTranslation( "fallback_lobby" ) );
-                        connect( def, false );
+                        connect( def, null, true, ServerConnectEvent.Reason.LOBBY_FALLBACK );
+                    } else if ( dimensionChange )
+                    {
+                        disconnect( bungee.getTranslation( "fallback_kick", future.cause().getClass().getName() ) );
                     } else
                     {
-                        if ( server == null )
-                        {
-                            disconnect( bungee.getTranslation( "fallback_kick" ) + future.cause().getClass().getName() );
-                        } else
-                        {
-                            sendMessage( bungee.getTranslation( "fallback_kick" ) + future.cause().getClass().getName() );
-                        }
+                        sendMessage( bungee.getTranslation( "fallback_kick", future.cause().getClass().getName() ) );
                     }
                 }
             }
         };
         Bootstrap b = new Bootstrap()
-                .channel( NioSocketChannel.class )
-                .group( BungeeCord.getInstance().eventLoops )
+                .channel( PipelineUtils.getChannel( target.getAddress() ) )
+                .group( ch.getHandle().eventLoop() )
                 .handler( initializer )
-                .option( ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000 ) // TODO: Configurable
+                .option( ChannelOption.CONNECT_TIMEOUT_MILLIS, request.getConnectTimeout() )
                 .remoteAddress( target.getAddress() );
         // Windows is bugged, multi homed users will just have to live with random connecting IPs
-        if ( getPendingConnection().getListener().isSetLocalAddress() && !PlatformDependent.isWindows() )
+        if ( getPendingConnection().getListener().isSetLocalAddress() && !PlatformDependent.isWindows() && getPendingConnection().getListener().getSocketAddress() instanceof InetSocketAddress )
         {
             b.localAddress( getPendingConnection().getListener().getHost().getHostString(), 0 );
         }
@@ -250,15 +374,37 @@ public final class UserConnection implements ProxiedPlayer
     }
 
     @Override
-    public synchronized void disconnect(String reason)
+    public void disconnect(String reason)
     {
-        if ( ch.getHandle().isActive() )
+        disconnect0( TextComponent.fromLegacyText( reason ) );
+    }
+
+    @Override
+    public void disconnect(BaseComponent... reason)
+    {
+        disconnect0( reason );
+    }
+
+    @Override
+    public void disconnect(BaseComponent reason)
+    {
+        disconnect0( reason );
+    }
+
+    public void disconnect0(final BaseComponent... reason)
+    {
+        if ( !ch.isClosing() )
         {
-            bungee.getLogger().log( Level.INFO, "[" + getName() + "] disconnected with: " + reason );
-            unsafe().sendPacket( new Kick( reason ) );
-            ch.close();
+            bungee.getLogger().log( Level.INFO, "[{0}] disconnected with: {1}", new Object[]
+            {
+                getName(), BaseComponent.toLegacyText( reason )
+            } );
+
+            ch.delayedClose( new Kick( ComponentSerializer.toString( reason ) ) );
+
             if ( server != null )
             {
+                server.setObsolete( true );
                 server.disconnect( "Quitting" );
             }
         }
@@ -274,9 +420,7 @@ public final class UserConnection implements ProxiedPlayer
     @Override
     public void sendMessage(String message)
     {
-        // TODO: Fix this
-        String encoded = BungeeCord.getInstance().gson.toJson( message );
-        unsafe().sendPacket( new Chat( "{\"text\":" + encoded + "}" ) );
+        sendMessage( TextComponent.fromLegacyText( message ) );
     }
 
     @Override
@@ -289,15 +433,79 @@ public final class UserConnection implements ProxiedPlayer
     }
 
     @Override
+    public void sendMessage(BaseComponent... message)
+    {
+        sendMessage( ChatMessageType.SYSTEM, message );
+    }
+
+    @Override
+    public void sendMessage(BaseComponent message)
+    {
+        sendMessage( ChatMessageType.SYSTEM, message );
+    }
+
+    private void sendMessage(ChatMessageType position, String message)
+    {
+        unsafe().sendPacket( new Chat( message, (byte) position.ordinal() ) );
+    }
+
+    @Override
+    public void sendMessage(ChatMessageType position, BaseComponent... message)
+    {
+        // transform score components
+        message = ChatComponentTransformer.getInstance().transform( this, message );
+
+        if ( position == ChatMessageType.ACTION_BAR )
+        {
+            // Versions older than 1.11 cannot send the Action bar with the new JSON formattings
+            // Fix by converting to a legacy message, see https://bugs.mojang.com/browse/MC-119145
+            if ( ProxyServer.getInstance().getProtocolVersion() <= ProtocolConstants.MINECRAFT_1_10 )
+            {
+                sendMessage( position, ComponentSerializer.toString( new TextComponent( BaseComponent.toLegacyText( message ) ) ) );
+            } else
+            {
+                net.md_5.bungee.protocol.packet.Title title = new net.md_5.bungee.protocol.packet.Title();
+                title.setAction( net.md_5.bungee.protocol.packet.Title.Action.ACTIONBAR );
+                title.setText( ComponentSerializer.toString( message ) );
+                unsafe.sendPacket( title );
+            }
+        } else
+        {
+            sendMessage( position, ComponentSerializer.toString( message ) );
+        }
+    }
+
+    @Override
+    public void sendMessage(ChatMessageType position, BaseComponent message)
+    {
+        message = ChatComponentTransformer.getInstance().transform( this, message )[0];
+
+        // Action bar doesn't display the new JSON formattings, legacy works - send it using this for now
+        if ( position == ChatMessageType.ACTION_BAR )
+        {
+            sendMessage( position, ComponentSerializer.toString( new TextComponent( BaseComponent.toLegacyText( message ) ) ) );
+        } else
+        {
+            sendMessage( position, ComponentSerializer.toString( message ) );
+        }
+    }
+
+    @Override
     public void sendData(String channel, byte[] data)
     {
-        unsafe().sendPacket( new PluginMessage( channel, data ) );
+        unsafe().sendPacket( new PluginMessage( channel, data, forgeClientHandler.isForgeUser() ) );
     }
 
     @Override
     public InetSocketAddress getAddress()
     {
-        return (InetSocketAddress) ch.getHandle().remoteAddress();
+        return (InetSocketAddress) getSocketAddress();
+    }
+
+    @Override
+    public SocketAddress getSocketAddress()
+    {
+        return ch.getRemoteAddress();
     }
 
     @Override
@@ -351,6 +559,12 @@ public final class UserConnection implements ProxiedPlayer
     }
 
     @Override
+    public Collection<String> getPermissions()
+    {
+        return Collections.unmodifiableCollection( permissions );
+    }
+
+    @Override
     public String toString()
     {
         return name;
@@ -366,5 +580,150 @@ public final class UserConnection implements ProxiedPlayer
     public String getUUID()
     {
         return getPendingConnection().getUUID();
+    }
+
+    @Override
+    public UUID getUniqueId()
+    {
+        return getPendingConnection().getUniqueId();
+    }
+
+    public void setSettings(ClientSettings settings)
+    {
+        this.settings = settings;
+        this.locale = null;
+    }
+
+    @Override
+    public Locale getLocale()
+    {
+        return ( locale == null && settings != null ) ? locale = Locale.forLanguageTag( settings.getLocale().replace( '_', '-' ) ) : locale;
+    }
+
+    @Override
+    public byte getViewDistance()
+    {
+        return ( settings != null ) ? settings.getViewDistance() : 10;
+    }
+
+    @Override
+    public ProxiedPlayer.ChatMode getChatMode()
+    {
+        if ( settings == null )
+        {
+            return ProxiedPlayer.ChatMode.SHOWN;
+        }
+
+        switch ( settings.getChatFlags() )
+        {
+            default:
+            case 0:
+                return ProxiedPlayer.ChatMode.SHOWN;
+            case 1:
+                return ProxiedPlayer.ChatMode.COMMANDS_ONLY;
+            case 2:
+                return ProxiedPlayer.ChatMode.HIDDEN;
+        }
+    }
+
+    @Override
+    public boolean hasChatColors()
+    {
+        return settings == null || settings.isChatColours();
+    }
+
+    @Override
+    public SkinConfiguration getSkinParts()
+    {
+        return ( settings != null ) ? new PlayerSkinConfiguration( settings.getSkinParts() ) : PlayerSkinConfiguration.SKIN_SHOW_ALL;
+    }
+
+    @Override
+    public ProxiedPlayer.MainHand getMainHand()
+    {
+        return ( settings == null || settings.getMainHand() == 1 ) ? ProxiedPlayer.MainHand.RIGHT : ProxiedPlayer.MainHand.LEFT;
+    }
+
+    @Override
+    public boolean isForgeUser()
+    {
+        return forgeClientHandler.isForgeUser();
+    }
+
+    @Override
+    public Map<String, String> getModList()
+    {
+        if ( forgeClientHandler.getClientModList() == null )
+        {
+            // Return an empty map, rather than a null, if the client hasn't got any mods,
+            // or is yet to complete a handshake.
+            return ImmutableMap.of();
+        }
+
+        return ImmutableMap.copyOf( forgeClientHandler.getClientModList() );
+    }
+
+    @Override
+    public void setTabHeader(BaseComponent header, BaseComponent footer)
+    {
+        header = ChatComponentTransformer.getInstance().transform( this, header )[0];
+        footer = ChatComponentTransformer.getInstance().transform( this, footer )[0];
+
+        unsafe().sendPacket( new PlayerListHeaderFooter(
+                ComponentSerializer.toString( header ),
+                ComponentSerializer.toString( footer )
+        ) );
+    }
+
+    @Override
+    public void setTabHeader(BaseComponent[] header, BaseComponent[] footer)
+    {
+        header = ChatComponentTransformer.getInstance().transform( this, header );
+        footer = ChatComponentTransformer.getInstance().transform( this, footer );
+
+        unsafe().sendPacket( new PlayerListHeaderFooter(
+                ComponentSerializer.toString( header ),
+                ComponentSerializer.toString( footer )
+        ) );
+    }
+
+    @Override
+    public void resetTabHeader()
+    {
+        // Mojang did not add a way to remove the header / footer completely, we can only set it to empty
+        setTabHeader( (BaseComponent) null, null );
+    }
+
+    @Override
+    public void sendTitle(Title title)
+    {
+        title.send( this );
+    }
+
+    public String getExtraDataInHandshake()
+    {
+        return this.getPendingConnection().getExtraDataInHandshake();
+    }
+
+    public void setCompressionThreshold(int compressionThreshold)
+    {
+        if ( !ch.isClosing() && this.compressionThreshold == -1 && compressionThreshold >= 0 )
+        {
+            this.compressionThreshold = compressionThreshold;
+            unsafe.sendPacket( new SetCompression( compressionThreshold ) );
+            ch.setCompressionThreshold( compressionThreshold );
+        }
+    }
+
+    @Override
+    public boolean isConnected()
+    {
+        return !ch.isClosed();
+    }
+
+    @Override
+    public Scoreboard getScoreboard()
+    {
+        return serverSentScoreboard;
     }
 }

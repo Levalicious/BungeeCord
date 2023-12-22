@@ -1,15 +1,16 @@
 package net.md_5.bungee;
 
+import com.google.common.base.Preconditions;
 import java.net.InetSocketAddress;
-import java.util.concurrent.TimeUnit;
+import java.net.SocketAddress;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
+import net.md_5.bungee.api.chat.BaseComponent;
 import net.md_5.bungee.api.connection.Server;
 import net.md_5.bungee.netty.ChannelWrapper;
 import net.md_5.bungee.protocol.DefinedPacket;
 import net.md_5.bungee.protocol.packet.PluginMessage;
-import net.md_5.bungee.protocol.packet.Kick;
 
 @RequiredArgsConstructor
 public class ServerConnection implements Server
@@ -22,6 +23,12 @@ public class ServerConnection implements Server
     @Getter
     @Setter
     private boolean isObsolete;
+    @Getter
+    private final boolean forgeServer = false;
+    @Getter
+    @Setter
+    private long sentPingId = -1;
+
     private final Unsafe unsafe = new Unsafe()
     {
         @Override
@@ -34,31 +41,45 @@ public class ServerConnection implements Server
     @Override
     public void sendData(String channel, byte[] data)
     {
-        unsafe().sendPacket( new PluginMessage( channel, data ) );
+        unsafe().sendPacket( new PluginMessage( channel, data, forgeServer ) );
     }
 
     @Override
-    public synchronized void disconnect(String reason)
+    public void disconnect(String reason)
     {
-        if ( !ch.isClosed() )
-        {
-            // TODO: Can we just use a future here?
-            unsafe().sendPacket( new Kick( reason ) );
-            ch.getHandle().eventLoop().schedule( new Runnable()
-            {
-                @Override
-                public void run()
-                {
-                    ch.getHandle().close();
-                }
-            }, 100, TimeUnit.MILLISECONDS );
-        }
+        disconnect();
+    }
+
+    @Override
+    public void disconnect(BaseComponent... reason)
+    {
+        Preconditions.checkArgument( reason.length == 0, "Server cannot have disconnect reason" );
+
+        ch.delayedClose( null );
+    }
+
+    @Override
+    public void disconnect(BaseComponent reason)
+    {
+        disconnect();
     }
 
     @Override
     public InetSocketAddress getAddress()
     {
+        return (InetSocketAddress) getSocketAddress();
+    }
+
+    @Override
+    public SocketAddress getSocketAddress()
+    {
         return getInfo().getAddress();
+    }
+
+    @Override
+    public boolean isConnected()
+    {
+        return !ch.isClosed();
     }
 
     @Override

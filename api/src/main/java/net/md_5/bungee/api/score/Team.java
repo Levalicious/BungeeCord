@@ -16,7 +16,10 @@ public class Team
     private String displayName;
     private String prefix;
     private String suffix;
-    private boolean friendlyFire;
+    private byte friendlyFire;
+    private String nameTagVisibility;
+    private String collisionRule;
+    private int color;
     private Set<String> players = new HashSet<>();
 
     public Collection<String> getPlayers()

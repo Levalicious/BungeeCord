@@ -11,23 +11,29 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.Stack;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 import java.util.logging.Level;
-import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import net.md_5.bungee.api.ChatColor;
 import net.md_5.bungee.api.CommandSender;
 import net.md_5.bungee.api.ProxyServer;
+import net.md_5.bungee.api.connection.ProxiedPlayer;
 import net.md_5.bungee.event.EventBus;
 import net.md_5.bungee.event.EventHandler;
 import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.Constructor;
+import org.yaml.snakeyaml.introspector.PropertyUtils;
 
 /**
  * Class to manage bridging between plugin duties and implementation duties, for
@@ -37,22 +43,29 @@ import org.yaml.snakeyaml.Yaml;
 public class PluginManager
 {
 
-    private static final Pattern argsSplit = Pattern.compile( " " );
     /*========================================================================*/
     private final ProxyServer proxy;
     /*========================================================================*/
-    private final Yaml yaml = new Yaml();
+    private final Yaml yaml;
     private final EventBus eventBus;
     private final Map<String, Plugin> plugins = new LinkedHashMap<>();
     private final Map<String, Command> commandMap = new HashMap<>();
     private Map<String, PluginDescription> toLoad = new HashMap<>();
-    private Multimap<Plugin, Command> commandsByPlugin = ArrayListMultimap.create();
-    private Multimap<Plugin, Listener> listenersByPlugin = ArrayListMultimap.create();
+    private final Multimap<Plugin, Command> commandsByPlugin = ArrayListMultimap.create();
+    private final Multimap<Plugin, Listener> listenersByPlugin = ArrayListMultimap.create();
 
     @SuppressWarnings("unchecked")
     public PluginManager(ProxyServer proxy)
     {
         this.proxy = proxy;
+
+        // Ignore unknown entries in the plugin descriptions
+        Constructor yamlConstructor = new Constructor();
+        PropertyUtils propertyUtils = yamlConstructor.getPropertyUtils();
+        propertyUtils.setSkipMissingProperties( true );
+        yamlConstructor.setPropertyUtils( propertyUtils );
+        yaml = new Yaml( yamlConstructor );
+
         eventBus = new EventBus( proxy.getLogger() );
     }
 
@@ -64,10 +77,10 @@ public class PluginManager
      */
     public void registerCommand(Plugin plugin, Command command)
     {
-        commandMap.put( command.getName().toLowerCase(), command );
+        commandMap.put( command.getName().toLowerCase( Locale.ROOT ), command );
         for ( String alias : command.getAliases() )
         {
-            commandMap.put( alias.toLowerCase(), command );
+            commandMap.put( alias.toLowerCase( Locale.ROOT ), command );
         }
         commandsByPlugin.put( plugin, command );
     }
@@ -79,7 +92,7 @@ public class PluginManager
      */
     public void unregisterCommand(Command command)
     {
-        commandMap.values().remove( command );
+        while ( commandMap.values().remove( command ) );
         commandsByPlugin.values().remove( command );
     }
 
@@ -92,9 +105,36 @@ public class PluginManager
     {
         for ( Iterator<Command> it = commandsByPlugin.get( plugin ).iterator(); it.hasNext(); )
         {
-            commandMap.values().remove( it.next() );
+            Command command = it.next();
+            while ( commandMap.values().remove( command ) );
             it.remove();
         }
+    }
+
+    private Command getCommandIfEnabled(String commandName, CommandSender sender)
+    {
+        String commandLower = commandName.toLowerCase( Locale.ROOT );
+
+        // Check if command is disabled when a player sent the command
+        if ( ( sender instanceof ProxiedPlayer ) && proxy.getDisabledCommands().contains( commandLower ) )
+        {
+            return null;
+        }
+
+        return commandMap.get( commandLower );
+    }
+
+    /**
+     * Checks if the command is registered and can possibly be executed by the
+     * sender (without taking permissions into account).
+     *
+     * @param commandName the name of the command
+     * @param sender the sender executing the command
+     * @return whether the command will be handled
+     */
+    public boolean isExecutableCommand(String commandName, CommandSender sender)
+    {
+        return getCommandIfEnabled( commandName, sender ) != null;
     }
 
     public boolean dispatchCommand(CommandSender sender, String commandLine)
@@ -108,32 +148,32 @@ public class PluginManager
      * @param sender the sender executing the command
      * @param commandLine the complete command line including command name and
      * arguments
+     * @param tabResults list to place tab results into. If this list is non
+     * null then the command will not be executed and tab results will be
+     * returned instead.
      * @return whether the command was handled
      */
     public boolean dispatchCommand(CommandSender sender, String commandLine, List<String> tabResults)
     {
-        String[] split = argsSplit.split( commandLine );
+        String[] split = commandLine.split( " ", -1 );
         // Check for chat that only contains " "
-        if ( split.length == 0 )
+        if ( split.length == 0 || split[0].isEmpty() )
         {
             return false;
         }
 
-        String commandName = split[0].toLowerCase();
-        if ( proxy.getDisabledCommands().contains( commandName ) )
-        {
-            return false;
-        }
-        Command command = commandMap.get( commandName );
+        Command command = getCommandIfEnabled( split[0], sender );
         if ( command == null )
         {
             return false;
         }
 
-        String permission = command.getPermission();
-        if ( permission != null && !permission.isEmpty() && !sender.hasPermission( permission ) )
+        if ( !command.hasPermission( sender ) )
         {
-            sender.sendMessage( proxy.getTranslation( "no_permission" ) );
+            if ( tabResults == null )
+            {
+                sender.sendMessage( proxy.getTranslation( "no_permission" ) );
+            }
             return true;
         }
 
@@ -142,8 +182,15 @@ public class PluginManager
         {
             if ( tabResults == null )
             {
+                if ( proxy.getConfig().isLogCommands() )
+                {
+                    proxy.getLogger().log( Level.INFO, "{0} executed command: /{1}", new Object[]
+                    {
+                        sender.getName(), commandLine
+                    } );
+                }
                 command.execute( sender, args );
-            } else if ( command instanceof TabExecutor )
+            } else if ( commandLine.contains( " " ) && command instanceof TabExecutor )
             {
                 for ( String s : ( (TabExecutor) command ).onTabComplete( sender, args ) )
                 {
@@ -179,7 +226,7 @@ public class PluginManager
         return plugins.get( name );
     }
 
-    public void loadAndEnablePlugins()
+    public void loadPlugins()
     {
         Map<PluginDescription, Boolean> pluginStatuses = new HashMap<>();
         for ( Map.Entry<String, PluginDescription> entry : toLoad.entrySet() )
@@ -187,12 +234,15 @@ public class PluginManager
             PluginDescription plugin = entry.getValue();
             if ( !enablePlugin( pluginStatuses, new Stack<PluginDescription>(), plugin ) )
             {
-                ProxyServer.getInstance().getLogger().warning( "Failed to enable " + entry.getKey() );
+                ProxyServer.getInstance().getLogger().log( Level.WARNING, "Failed to enable {0}", entry.getKey() );
             }
         }
         toLoad.clear();
         toLoad = null;
+    }
 
+    public void enablePlugins()
+    {
         for ( Plugin plugin : plugins.values() )
         {
             try
@@ -216,11 +266,16 @@ public class PluginManager
             return pluginStatuses.get( plugin );
         }
 
+        // combine all dependencies for 'for loop'
+        Set<String> dependencies = new HashSet<>();
+        dependencies.addAll( plugin.getDepends() );
+        dependencies.addAll( plugin.getSoftDepends() );
+
         // success status
         boolean status = true;
 
         // try to load dependencies first
-        for ( String dependName : plugin.getDepends() )
+        for ( String dependName : dependencies )
         {
             PluginDescription depend = toLoad.get( dependName );
             Boolean dependStatus = ( depend != null ) ? pluginStatuses.get( depend ) : Boolean.FALSE;
@@ -235,7 +290,7 @@ public class PluginManager
                         dependencyGraph.append( element.getName() ).append( " -> " );
                     }
                     dependencyGraph.append( plugin.getName() ).append( " -> " ).append( dependName );
-                    ProxyServer.getInstance().getLogger().log( Level.WARNING, "Circular dependency detected: " + dependencyGraph );
+                    ProxyServer.getInstance().getLogger().log( Level.WARNING, "Circular dependency detected: {0}", dependencyGraph );
                     status = false;
                 } else
                 {
@@ -245,11 +300,11 @@ public class PluginManager
                 }
             }
 
-            if ( dependStatus == Boolean.FALSE )
+            if ( dependStatus == Boolean.FALSE && plugin.getDepends().contains( dependName ) ) // only fail if this wasn't a soft dependency
             {
                 ProxyServer.getInstance().getLogger().log( Level.WARNING, "{0} (required by {1}) is unavailable", new Object[]
                 {
-                    String.valueOf( depend.getName() ), plugin.getName()
+                    String.valueOf( dependName ), plugin.getName()
                 } );
                 status = false;
             }
@@ -305,12 +360,19 @@ public class PluginManager
             {
                 try ( JarFile jar = new JarFile( file ) )
                 {
-                    JarEntry pdf = jar.getJarEntry( "plugin.yml" );
-                    Preconditions.checkNotNull( pdf, "Plugin must have a plugin.yml" );
+                    JarEntry pdf = jar.getJarEntry( "bungee.yml" );
+                    if ( pdf == null )
+                    {
+                        pdf = jar.getJarEntry( "plugin.yml" );
+                    }
+                    Preconditions.checkNotNull( pdf, "Plugin must have a plugin.yml or bungee.yml" );
 
                     try ( InputStream in = jar.getInputStream( pdf ) )
                     {
                         PluginDescription desc = yaml.loadAs( in, PluginDescription.class );
+                        Preconditions.checkNotNull( desc.getName(), "Plugin from %s has no name", file );
+                        Preconditions.checkNotNull( desc.getMain(), "Plugin from %s has no main", file );
+
                         desc.setFile( file );
                         toLoad.put( desc.getName(), desc );
                     }
@@ -338,10 +400,10 @@ public class PluginManager
         eventBus.post( event );
         event.postCall();
 
-        long elapsed = start - System.nanoTime();
-        if ( elapsed > 250000 )
+        long elapsed = System.nanoTime() - start;
+        if ( elapsed > 250000000 )
         {
-            ProxyServer.getInstance().getLogger().log( Level.WARNING, "Event {0} took more {1}ns to process!", new Object[]
+            ProxyServer.getInstance().getLogger().log( Level.WARNING, "Event {0} took {1}ns to process!", new Object[]
             {
                 event, elapsed
             } );
@@ -382,7 +444,7 @@ public class PluginManager
     /**
      * Unregister all of a Plugin's listener.
      *
-     * @param plugin
+     * @param plugin target plugin
      */
     public void unregisterListeners(Plugin plugin)
     {
@@ -391,5 +453,15 @@ public class PluginManager
             eventBus.unregister( it.next() );
             it.remove();
         }
+    }
+
+    /**
+     * Get an unmodifiable collection of all registered commands.
+     *
+     * @return commands
+     */
+    public Collection<Map.Entry<String, Command>> getCommands()
+    {
+        return Collections.unmodifiableCollection( commandMap.entrySet() );
     }
 }

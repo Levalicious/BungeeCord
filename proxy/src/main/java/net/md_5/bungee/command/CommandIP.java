@@ -1,12 +1,10 @@
 package net.md_5.bungee.command;
 
-import net.md_5.bungee.api.ChatColor;
 import net.md_5.bungee.api.CommandSender;
 import net.md_5.bungee.api.ProxyServer;
 import net.md_5.bungee.api.connection.ProxiedPlayer;
-import net.md_5.bungee.api.plugin.Command;
 
-public class CommandIP extends Command
+public class CommandIP extends PlayerCommand
 {
 
     public CommandIP()
@@ -19,16 +17,16 @@ public class CommandIP extends Command
     {
         if ( args.length < 1 )
         {
-            sender.sendMessage( ChatColor.RED + "Please follow this command by a user name" );
+            sender.sendMessage( ProxyServer.getInstance().getTranslation( "username_needed" ) );
             return;
         }
         ProxiedPlayer user = ProxyServer.getInstance().getPlayer( args[0] );
         if ( user == null )
         {
-            sender.sendMessage( ChatColor.RED + "That user is not online" );
+            sender.sendMessage( ProxyServer.getInstance().getTranslation( "user_not_online" ) );
         } else
         {
-            sender.sendMessage( ChatColor.BLUE + "IP of " + args[0] + " is " + user.getAddress() );
+            sender.sendMessage( ProxyServer.getInstance().getTranslation( "command_ip", args[0], user.getSocketAddress() ) );
         }
     }
 }

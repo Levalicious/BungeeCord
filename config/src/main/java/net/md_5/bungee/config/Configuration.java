@@ -1,20 +1,48 @@
 package net.md_5.bungee.config;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import lombok.AccessLevel;
-import lombok.RequiredArgsConstructor;
 
-@RequiredArgsConstructor(access = AccessLevel.PACKAGE)
 public final class Configuration
 {
 
     private static final char SEPARATOR = '.';
     final Map<String, Object> self;
     private final Configuration defaults;
+
+    public Configuration()
+    {
+        this( null );
+    }
+
+    public Configuration(Configuration defaults)
+    {
+        this( new LinkedHashMap<String, Object>(), defaults );
+    }
+
+    Configuration(Map<?, ?> map, Configuration defaults)
+    {
+        this.self = new LinkedHashMap<>();
+        this.defaults = defaults;
+
+        for ( Map.Entry<?, ?> entry : map.entrySet() )
+        {
+            String key = ( entry.getKey() == null ) ? "null" : entry.getKey().toString();
+
+            if ( entry.getValue() instanceof Map )
+            {
+                this.self.put( key, new Configuration( (Map) entry.getValue(), ( defaults == null ) ? null : defaults.getSection( key ) ) );
+            } else
+            {
+                this.self.put( key, entry.getValue() );
+            }
+        }
+    }
 
     private Configuration getSectionFor(String path)
     {
@@ -28,15 +56,11 @@ public final class Configuration
         Object section = self.get( root );
         if ( section == null )
         {
-            section = new LinkedHashMap<>();
+            section = new Configuration( ( defaults == null ) ? null : defaults.getSection( root ) );
             self.put( root, section );
         }
-        if ( section instanceof Configuration )
-        {
-            return (Configuration) section;
-        }
 
-        return new Configuration( (Map) section, ( defaults == null ) ? null : defaults.getSectionFor( path ) );
+        return (Configuration) section;
     }
 
     private String getChild(String path)
@@ -59,12 +83,22 @@ public final class Configuration
             val = section.get( getChild( path ), def );
         }
 
+        if ( val == null && def instanceof Configuration )
+        {
+            self.put( path, def );
+        }
+
         return ( val != null ) ? (T) val : def;
+    }
+
+    public boolean contains(String path)
+    {
+        return get( path, null ) != null;
     }
 
     public Object get(String path)
     {
-        return get( path, null );
+        return get( path, getDefault( path ) );
     }
 
     public Object getDefault(String path)
@@ -74,10 +108,21 @@ public final class Configuration
 
     public void set(String path, Object value)
     {
+        if ( value instanceof Map )
+        {
+            value = new Configuration( (Map) value, ( defaults == null ) ? null : defaults.getSection( path ) );
+        }
+
         Configuration section = getSectionFor( path );
         if ( section == this )
         {
-            self.put( path, value );
+            if ( value == null )
+            {
+                self.remove( path );
+            } else
+            {
+                self.put( path, value );
+            }
         } else
         {
             section.set( getChild( path ), value );
@@ -88,7 +133,17 @@ public final class Configuration
     public Configuration getSection(String path)
     {
         Object def = getDefault( path );
-        return new Configuration( (Map) ( get( path, ( def instanceof Map ) ? def : Collections.EMPTY_MAP ) ), ( defaults == null ) ? null : defaults.getSection( path ) );
+        return (Configuration) get( path, ( def instanceof Configuration ) ? def : new Configuration( ( defaults == null ) ? null : defaults.getSection( path ) ) );
+    }
+
+    /**
+     * Gets keys, not deep by default.
+     *
+     * @return top level keys for this section
+     */
+    public Collection<String> getKeys()
+    {
+        return new LinkedHashSet<>( self.keySet() );
     }
 
     /*------------------------------------------------------------------------*/

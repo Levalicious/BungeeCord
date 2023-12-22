@@ -1,28 +1,68 @@
 package net.md_5.bungee;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Ticker;
+import com.google.common.cache.CacheBuilder;
+import com.google.common.cache.CacheLoader;
+import com.google.common.cache.LoadingCache;
 import java.net.InetAddress;
-import java.util.HashMap;
-import java.util.Map;
-import lombok.RequiredArgsConstructor;
+import java.net.InetSocketAddress;
+import java.net.SocketAddress;
+import java.util.concurrent.TimeUnit;
 
-@RequiredArgsConstructor
 public class ConnectionThrottle
 {
 
-    private final Map<InetAddress, Long> throttle = new HashMap<>();
-    private final int throttleTime;
+    private final LoadingCache<InetAddress, Integer> throttle;
+    private final int throttleLimit;
 
-    public void unthrottle(InetAddress address)
+    public ConnectionThrottle(int throttleTime, int throttleLimit)
     {
-        throttle.remove( address );
+        this( Ticker.systemTicker(), throttleTime, throttleLimit );
     }
 
-    public boolean throttle(InetAddress address)
+    @VisibleForTesting
+    ConnectionThrottle(Ticker ticker, int throttleTime, int throttleLimit)
     {
-        Long value = throttle.get( address );
-        long currentTime = System.currentTimeMillis();
+        this.throttle = CacheBuilder.newBuilder()
+                .ticker( ticker )
+                .concurrencyLevel( Runtime.getRuntime().availableProcessors() )
+                .initialCapacity( 100 )
+                .expireAfterWrite( throttleTime, TimeUnit.MILLISECONDS )
+                .build( new CacheLoader<InetAddress, Integer>()
+                {
+                    @Override
+                    public Integer load(InetAddress key) throws Exception
+                    {
+                        return 0;
+                    }
+                } );
+        this.throttleLimit = throttleLimit;
+    }
 
-        throttle.put( address, currentTime );
-        return value != null && currentTime - value < throttleTime;
+    public void unthrottle(SocketAddress socketAddress)
+    {
+        if ( !( socketAddress instanceof InetSocketAddress ) )
+        {
+            return;
+        }
+
+        InetAddress address = ( (InetSocketAddress) socketAddress ).getAddress();
+        int throttleCount = throttle.getUnchecked( address ) - 1;
+        throttle.put( address, throttleCount );
+    }
+
+    public boolean throttle(SocketAddress socketAddress)
+    {
+        if ( !( socketAddress instanceof InetSocketAddress ) )
+        {
+            return false;
+        }
+
+        InetAddress address = ( (InetSocketAddress) socketAddress ).getAddress();
+        int throttleCount = throttle.getUnchecked( address ) + 1;
+        throttle.put( address, throttleCount );
+
+        return throttleCount > throttleLimit;
     }
 }

@@ -1,12 +1,13 @@
 package net.md_5.bungee.protocol.packet;
 
-import net.md_5.bungee.protocol.DefinedPacket;
 import io.netty.buffer.ByteBuf;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
 import net.md_5.bungee.protocol.AbstractPacketHandler;
+import net.md_5.bungee.protocol.DefinedPacket;
+import net.md_5.bungee.protocol.ProtocolConstants;
 
 @Data
 @NoArgsConstructor
@@ -23,38 +24,54 @@ public class Team extends DefinedPacket
     private String displayName;
     private String prefix;
     private String suffix;
-    private boolean friendlyFire;
-    private short playerCount;
+    private String nameTagVisibility;
+    private String collisionRule;
+    private int color;
+    private byte friendlyFire;
     private String[] players;
 
     /**
      * Packet to destroy a team.
      *
-     * @param name
+     * @param name team name
      */
     public Team(String name)
     {
-        this();
         this.name = name;
         this.mode = 1;
     }
 
     @Override
-    public void read(ByteBuf buf)
+    public void read(ByteBuf buf, ProtocolConstants.Direction direction, int protocolVersion)
     {
         name = readString( buf );
         mode = buf.readByte();
         if ( mode == 0 || mode == 2 )
         {
             displayName = readString( buf );
-            prefix = readString( buf );
-            suffix = readString( buf );
-            friendlyFire = buf.readBoolean();
+            if ( protocolVersion < ProtocolConstants.MINECRAFT_1_13 )
+            {
+                prefix = readString( buf );
+                suffix = readString( buf );
+            }
+            friendlyFire = buf.readByte();
+            nameTagVisibility = readString( buf );
+            if ( protocolVersion >= ProtocolConstants.MINECRAFT_1_9 )
+            {
+                collisionRule = readString( buf );
+            }
+            color = ( protocolVersion >= ProtocolConstants.MINECRAFT_1_13 ) ? readVarInt( buf ) : buf.readByte();
+            if ( protocolVersion >= ProtocolConstants.MINECRAFT_1_13 )
+            {
+                prefix = readString( buf );
+                suffix = readString( buf );
+            }
         }
         if ( mode == 0 || mode == 3 || mode == 4 )
         {
-            players = new String[ buf.readShort() ];
-            for ( int i = 0; i < getPlayers().length; i++ )
+            int len = readVarInt( buf );
+            players = new String[ len ];
+            for ( int i = 0; i < len; i++ )
             {
                 players[i] = readString( buf );
             }
@@ -62,23 +79,41 @@ public class Team extends DefinedPacket
     }
 
     @Override
-    public void write(ByteBuf buf)
+    public void write(ByteBuf buf, ProtocolConstants.Direction direction, int protocolVersion)
     {
         writeString( name, buf );
         buf.writeByte( mode );
         if ( mode == 0 || mode == 2 )
         {
             writeString( displayName, buf );
-            writeString( prefix, buf );
-            writeString( suffix, buf );
-            buf.writeBoolean( friendlyFire );
+            if ( protocolVersion < ProtocolConstants.MINECRAFT_1_13 )
+            {
+                writeString( prefix, buf );
+                writeString( suffix, buf );
+            }
+            buf.writeByte( friendlyFire );
+            writeString( nameTagVisibility, buf );
+            if ( protocolVersion >= ProtocolConstants.MINECRAFT_1_9 )
+            {
+                writeString( collisionRule, buf );
+            }
+
+            if ( protocolVersion >= ProtocolConstants.MINECRAFT_1_13 )
+            {
+                writeVarInt( color, buf );
+                writeString( prefix, buf );
+                writeString( suffix, buf );
+            } else
+            {
+                buf.writeByte( color );
+            }
         }
         if ( mode == 0 || mode == 3 || mode == 4 )
         {
-            buf.writeShort( players.length );
-            for ( int i = 0; i < players.length; i++ )
+            writeVarInt( players.length, buf );
+            for ( String player : players )
             {
-                writeString( players[i], buf );
+                writeString( player, buf );
             }
         }
     }

@@ -1,12 +1,13 @@
 package net.md_5.bungee.protocol.packet;
 
-import net.md_5.bungee.protocol.DefinedPacket;
 import io.netty.buffer.ByteBuf;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
 import net.md_5.bungee.protocol.AbstractPacketHandler;
+import net.md_5.bungee.protocol.DefinedPacket;
+import net.md_5.bungee.protocol.ProtocolConstants;
 
 @Data
 @NoArgsConstructor
@@ -19,14 +20,14 @@ public class EncryptionResponse extends DefinedPacket
     private byte[] verifyToken;
 
     @Override
-    public void read(ByteBuf buf)
+    public void read(ByteBuf buf, ProtocolConstants.Direction direction, int protocolVersion)
     {
-        sharedSecret = readArray( buf );
-        verifyToken = readArray( buf );
+        sharedSecret = readArray( buf, 128 );
+        verifyToken = readArray( buf, 128 );
     }
 
     @Override
-    public void write(ByteBuf buf)
+    public void write(ByteBuf buf, ProtocolConstants.Direction direction, int protocolVersion)
     {
         writeArray( sharedSecret, buf );
         writeArray( verifyToken, buf );

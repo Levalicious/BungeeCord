@@ -62,6 +62,11 @@ public class Scoreboard
         scores.put( score.getItemName(), score );
     }
 
+    public Score getScore(String name)
+    {
+        return scores.get( name );
+    }
+
     public void addTeam(Team team)
     {
         Preconditions.checkNotNull( team, "team" );
@@ -72,6 +77,11 @@ public class Scoreboard
     public Team getTeam(String name)
     {
         return teams.get( name );
+    }
+
+    public Objective getObjective(String name)
+    {
+        return objectives.get( name );
     }
 
     public void removeObjective(String objectiveName)

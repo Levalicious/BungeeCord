@@ -1,19 +1,21 @@
 package net.md_5.bungee.api;
 
-import net.md_5.bungee.api.plugin.PluginManager;
 import com.google.common.base.Preconditions;
 import java.io.File;
 import java.net.InetSocketAddress;
+import java.net.SocketAddress;
 import java.util.Collection;
 import java.util.Map;
+import java.util.UUID;
 import java.util.logging.Logger;
 import lombok.Getter;
+import net.md_5.bungee.api.chat.BaseComponent;
 import net.md_5.bungee.api.config.ConfigurationAdapter;
 import net.md_5.bungee.api.config.ServerInfo;
 import net.md_5.bungee.api.connection.ProxiedPlayer;
 import net.md_5.bungee.api.plugin.Plugin;
+import net.md_5.bungee.api.plugin.PluginManager;
 import net.md_5.bungee.api.scheduler.TaskScheduler;
-import net.md_5.bungee.api.tab.CustomTabList;
 
 public abstract class ProxyServer
 {
@@ -51,6 +53,8 @@ public abstract class ProxyServer
     /**
      * Gets a localized string from the .properties file.
      *
+     * @param name translation name
+     * @param args translation arguments
      * @return the localized string
      */
     public abstract String getTranslation(String name, Object... args);
@@ -77,6 +81,14 @@ public abstract class ProxyServer
      * @return their player instance
      */
     public abstract ProxiedPlayer getPlayer(String name);
+
+    /**
+     * Gets a connected player via their UUID
+     *
+     * @param uuid of the player
+     * @return their player instance
+     */
+    public abstract ProxiedPlayer getPlayer(UUID uuid);
 
     /**
      * Return all servers registered to this proxy, keyed by name. Unlike the
@@ -139,12 +151,11 @@ public abstract class ProxyServer
     public abstract void stop();
 
     /**
-     * Start this instance so that it may accept connections.
+     * Gracefully mark this instance for shutdown.
      *
-     * @throws Exception any exception thrown during startup causing the
-     * instance to fail to boot
+     * @param reason the reason for stopping. This will be shown to players.
      */
-    public abstract void start() throws Exception;
+    public abstract void stop(String reason);
 
     /**
      * Register a channel for use with plugin messages. This is required by some
@@ -173,6 +184,7 @@ public abstract class ProxyServer
      *
      * @return the supported Minecraft version
      */
+    @Deprecated
     public abstract String getGameVersion();
 
     /**
@@ -180,6 +192,7 @@ public abstract class ProxyServer
      *
      * @return the Minecraft protocol version
      */
+    @Deprecated
     public abstract int getProtocolVersion();
 
     /**
@@ -193,6 +206,18 @@ public abstract class ProxyServer
      * @return the constructed instance
      */
     public abstract ServerInfo constructServerInfo(String name, InetSocketAddress address, String motd, boolean restricted);
+
+    /**
+     * Factory method to construct an implementation specific server info
+     * instance.
+     *
+     * @param name name of the server
+     * @param address connectable Minecraft address + port of the server
+     * @param motd the motd when used as a forced server
+     * @param restricted whether the server info restricted property will be set
+     * @return the constructed instance
+     */
+    public abstract ServerInfo constructServerInfo(String name, SocketAddress address, String motd, boolean restricted);
 
     /**
      * Returns the console overlord for this proxy. Being the console, this
@@ -231,15 +256,22 @@ public abstract class ProxyServer
      *
      * @param message the message to broadcast
      */
+    @Deprecated
     public abstract void broadcast(String message);
 
     /**
-     * Gets a new instance of this proxies custom tab list.
+     * Send the specified message to the console and all connected players.
      *
-     * @param player the player to generate this list in the context of
-     * @return a new {@link CustomTabList} instance
+     * @param message the message to broadcast
      */
-    public abstract CustomTabList customTabList(ProxiedPlayer player);
+    public abstract void broadcast(BaseComponent... message);
+
+    /**
+     * Send the specified message to the console and all connected players.
+     *
+     * @param message the message to broadcast
+     */
+    public abstract void broadcast(BaseComponent message);
 
     /**
      * Gets the commands which are disabled and will not be run on this proxy.
@@ -247,4 +279,36 @@ public abstract class ProxyServer
      * @return the set of disabled commands
      */
     public abstract Collection<String> getDisabledCommands();
+
+    /**
+     * Gets BungeeCord's core config.
+     *
+     * @return the config.
+     */
+    public abstract ProxyConfig getConfig();
+
+    /**
+     * Attempts to match any players with the given name, and returns a list of
+     * all possible matches.
+     *
+     * The exact algorithm to use to match players is implementation specific,
+     * but in general you can expect this method to return player's whose names
+     * begin with the specified prefix.
+     *
+     * @param match the (partial) name to match
+     * @return list of all possible players, singleton if there is an exact
+     * match
+     */
+    public abstract Collection<ProxiedPlayer> matchPlayer(String match);
+
+    /**
+     * Creates a new empty title configuration. In most cases you will want to
+     * {@link Title#reset()} the current title first so your title won't be
+     * affected by a previous one.
+     *
+     * @return A new empty title configuration.
+     * @see Title
+     */
+    public abstract Title createTitle();
+
 }

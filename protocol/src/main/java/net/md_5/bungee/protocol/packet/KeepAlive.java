@@ -1,12 +1,13 @@
 package net.md_5.bungee.protocol.packet;
 
-import net.md_5.bungee.protocol.DefinedPacket;
 import io.netty.buffer.ByteBuf;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
 import net.md_5.bungee.protocol.AbstractPacketHandler;
+import net.md_5.bungee.protocol.DefinedPacket;
+import net.md_5.bungee.protocol.ProtocolConstants;
 
 @Data
 @NoArgsConstructor
@@ -15,18 +16,24 @@ import net.md_5.bungee.protocol.AbstractPacketHandler;
 public class KeepAlive extends DefinedPacket
 {
 
-    private int randomId;
+    private long randomId;
 
     @Override
-    public void read(ByteBuf buf)
+    public void read(ByteBuf buf, ProtocolConstants.Direction direction, int protocolVersion)
     {
-        randomId = buf.readInt();
+        randomId = ( protocolVersion >= ProtocolConstants.MINECRAFT_1_12_2 ) ? buf.readLong() : readVarInt( buf );
     }
 
     @Override
-    public void write(ByteBuf buf)
+    public void write(ByteBuf buf, ProtocolConstants.Direction direction, int protocolVersion)
     {
-        buf.writeInt( randomId );
+        if ( protocolVersion >= ProtocolConstants.MINECRAFT_1_12_2 )
+        {
+            buf.writeLong( randomId );
+        } else
+        {
+            writeVarInt( (int) randomId, buf );
+        }
     }
 
     @Override

@@ -1,22 +1,25 @@
 package net.md_5.bungee.api.config;
 
 import java.net.InetSocketAddress;
+import java.net.SocketAddress;
+import java.util.List;
 import java.util.Map;
+import lombok.AllArgsConstructor;
 import lombok.Data;
-import net.md_5.bungee.api.tab.TabListHandler;
 
 /**
  * Class representing the configuration of a server listener. Used for allowing
  * multiple listeners on different ports.
  */
 @Data
+@AllArgsConstructor
 public class ListenerInfo
 {
 
     /**
      * Host to bind to.
      */
-    private final InetSocketAddress host;
+    private final SocketAddress socketAddress;
     /**
      * Displayed MOTD.
      */
@@ -30,14 +33,10 @@ public class ListenerInfo
      */
     private final int tabListSize;
     /**
-     * Name of the server which users will be taken to by default.
+     * List of servers in order of join attempt. First attempt is the first
+     * element, second attempt is the next element, etc etc.
      */
-    private final String defaultServer;
-    /**
-     * Name of the server which users will be taken when current server goes
-     * down.
-     */
-    private final String fallbackServer;
+    private final List<String> serverPriority;
     /**
      * Whether reconnect locations will be used, or else the user is simply
      * transferred to the default server on connect.
@@ -49,9 +48,9 @@ public class ListenerInfo
      */
     private final Map<String, String> forcedHosts;
     /**
-     * Class used to build tab lists for this player.
+     * The type of tab list to use
      */
-    private final Class<? extends TabListHandler> tabList;
+    private final String tabListType;
     /**
      * Whether to set the local address when connecting to servers.
      */
@@ -69,4 +68,51 @@ public class ListenerInfo
      * Whether to enable udp query.
      */
     private final boolean queryEnabled;
+    /**
+     * Whether to support HAProxy PROXY protocol.
+     */
+    private final boolean proxyProtocol;
+
+    @Deprecated
+    public ListenerInfo(InetSocketAddress host, String motd, int maxPlayers, int tabListSize, List<String> serverPriority, boolean forceDefault, Map<String, String> forcedHosts, String tabListType, boolean setLocalAddress, boolean pingPassthrough, int queryPort, boolean queryEnabled)
+    {
+        this( host, motd, maxPlayers, tabListSize, serverPriority, forceDefault, forcedHosts, tabListType, setLocalAddress, pingPassthrough, queryPort, queryEnabled, false );
+    }
+
+    /**
+     * Gets the highest priority server to join.
+     *
+     * @return default server
+     * @deprecated replaced by {@link #serverPriority}
+     */
+    @Deprecated
+    public String getDefaultServer()
+    {
+        return serverPriority.get( 0 );
+    }
+
+    /**
+     * Gets the second highest priority server to join, or else the highest
+     * priority.
+     *
+     * @return fallback server
+     * @deprecated replaced by {@link #serverPriority}
+     */
+    @Deprecated
+    public String getFallbackServer()
+    {
+        return ( serverPriority.size() > 1 ) ? serverPriority.get( 1 ) : getDefaultServer();
+    }
+
+    /**
+     * Gets the bind address as an InetSocketAddress if possible.
+     *
+     * @return bind host
+     * @deprecated BungeeCord can listen via Unix domain sockets
+     */
+    @Deprecated
+    public InetSocketAddress getHost()
+    {
+        return (InetSocketAddress) socketAddress;
+    }
 }

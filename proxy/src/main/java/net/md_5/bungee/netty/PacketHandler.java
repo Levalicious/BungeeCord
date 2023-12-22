@@ -8,6 +8,11 @@ public abstract class PacketHandler extends net.md_5.bungee.protocol.AbstractPac
     @Override
     public abstract String toString();
 
+    public boolean shouldHandle(PacketWrapper packet) throws Exception
+    {
+        return true;
+    }
+
     public void exception(Throwable t) throws Exception
     {
     }
@@ -21,6 +26,10 @@ public abstract class PacketHandler extends net.md_5.bungee.protocol.AbstractPac
     }
 
     public void disconnected(ChannelWrapper channel) throws Exception
+    {
+    }
+
+    public void writabilityChanged(ChannelWrapper channel) throws Exception
     {
     }
 }

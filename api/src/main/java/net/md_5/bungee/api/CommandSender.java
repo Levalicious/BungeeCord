@@ -1,6 +1,7 @@
 package net.md_5.bungee.api;
 
 import java.util.Collection;
+import net.md_5.bungee.api.chat.BaseComponent;
 
 public interface CommandSender
 {
@@ -17,6 +18,7 @@ public interface CommandSender
      *
      * @param message the message to send
      */
+    @Deprecated
     public void sendMessage(String message);
 
     /**
@@ -25,7 +27,22 @@ public interface CommandSender
      *
      * @param messages the messages to send
      */
+    @Deprecated
     public void sendMessages(String... messages);
+
+    /**
+     * Send a message to this sender.
+     *
+     * @param message the message to send
+     */
+    public void sendMessage(BaseComponent... message);
+
+    /**
+     * Send a message to this sender.
+     *
+     * @param message the message to send
+     */
+    public void sendMessage(BaseComponent message);
 
     /**
      * Get all groups this user is part of. This returns an unmodifiable
@@ -64,4 +81,12 @@ public interface CommandSender
      * @param value the value of the node
      */
     public void setPermission(String permission, boolean value);
+
+    /**
+     * Get all Permissions which this CommandSender has
+     *
+     * @return a unmodifiable Collection of Strings which represent their
+     * permissions
+     */
+    public Collection<String> getPermissions();
 }

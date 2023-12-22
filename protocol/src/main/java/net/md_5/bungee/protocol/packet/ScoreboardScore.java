@@ -1,14 +1,13 @@
 package net.md_5.bungee.protocol.packet;
 
-import net.md_5.bungee.protocol.DefinedPacket;
 import io.netty.buffer.ByteBuf;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
-import lombok.Getter;
 import lombok.NoArgsConstructor;
-import lombok.ToString;
 import net.md_5.bungee.protocol.AbstractPacketHandler;
+import net.md_5.bungee.protocol.DefinedPacket;
+import net.md_5.bungee.protocol.ProtocolConstants;
 
 @Data
 @NoArgsConstructor
@@ -26,26 +25,26 @@ public class ScoreboardScore extends DefinedPacket
     private int value;
 
     @Override
-    public void read(ByteBuf buf)
+    public void read(ByteBuf buf, ProtocolConstants.Direction direction, int protocolVersion)
     {
         itemName = readString( buf );
         action = buf.readByte();
+        scoreName = readString( buf );
         if ( action != 1 )
         {
-            scoreName = readString( buf );
-            value = buf.readInt();
+            value = readVarInt( buf );
         }
     }
 
     @Override
-    public void write(ByteBuf buf)
+    public void write(ByteBuf buf, ProtocolConstants.Direction direction, int protocolVersion)
     {
         writeString( itemName, buf );
         buf.writeByte( action );
+        writeString( scoreName, buf );
         if ( action != 1 )
         {
-            writeString( scoreName, buf );
-            buf.writeInt( value );
+            writeVarInt( value, buf );
         }
     }
 

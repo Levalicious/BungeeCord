@@ -12,11 +12,14 @@ import java.util.Arrays;
 import java.util.Random;
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
-import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import lombok.Getter;
-import net.md_5.bungee.protocol.packet.EncryptionResponse;
+import net.md_5.bungee.jni.NativeCode;
+import net.md_5.bungee.jni.cipher.BungeeCipher;
+import net.md_5.bungee.jni.cipher.JavaCipher;
+import net.md_5.bungee.jni.cipher.NativeCipher;
 import net.md_5.bungee.protocol.packet.EncryptionRequest;
+import net.md_5.bungee.protocol.packet.EncryptionResponse;
 
 /**
  * Class containing all encryption related methods for the proxy.
@@ -25,24 +28,27 @@ public class EncryptionUtil
 {
 
     private static final Random random = new Random();
-    public static KeyPair keys;
+    public static final KeyPair keys;
     @Getter
-    private static SecretKey secret = new SecretKeySpec( new byte[ 16 ], "AES" );
+    private static final SecretKey secret = new SecretKeySpec( new byte[ 16 ], "AES" );
+    public static final NativeCode<BungeeCipher> nativeFactory = new NativeCode<>( "native-cipher", JavaCipher.class, NativeCipher.class );
 
     static
     {
         try
         {
-            keys = KeyPairGenerator.getInstance( "RSA" ).generateKeyPair();
+            KeyPairGenerator generator = KeyPairGenerator.getInstance( "RSA" );
+            generator.initialize( 1024 );
+            keys = generator.generateKeyPair();
         } catch ( NoSuchAlgorithmException ex )
         {
             throw new ExceptionInInitializerError( ex );
         }
     }
 
-    public static EncryptionRequest encryptRequest(boolean onlinemode)
+    public static EncryptionRequest encryptRequest()
     {
-        String hash = ( onlinemode ) ? Long.toString( random.nextLong(), 16 ) : "-";
+        String hash = Long.toString( random.nextLong(), 16 );
         byte[] pubKey = keys.getPublic().getEncoded();
         byte[] verify = new byte[ 4 ];
         random.nextBytes( verify );
@@ -64,11 +70,12 @@ public class EncryptionUtil
         return new SecretKeySpec( cipher.doFinal( resp.getSharedSecret() ), "AES" );
     }
 
-    public static Cipher getCipher(int opMode, Key shared) throws GeneralSecurityException
+    public static BungeeCipher getCipher(boolean forEncryption, SecretKey shared) throws GeneralSecurityException
     {
-        Cipher cip = Cipher.getInstance( "AES/CFB8/NoPadding" );
-        cip.init( opMode, shared, new IvParameterSpec( shared.getEncoded() ) );
-        return cip;
+        BungeeCipher cipher = nativeFactory.newInstance();
+
+        cipher.init( forEncryption, shared );
+        return cipher;
     }
 
     public static PublicKey getPubkey(EncryptionRequest request) throws GeneralSecurityException

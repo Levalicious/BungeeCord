@@ -2,22 +2,22 @@ package net.md_5.bungee.command;
 
 import java.util.Collection;
 import java.util.Collections;
+import lombok.AccessLevel;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import net.md_5.bungee.api.CommandSender;
 import net.md_5.bungee.api.ProxyServer;
+import net.md_5.bungee.api.chat.BaseComponent;
 
 /**
  * Command sender representing the proxy console.
  */
-public class ConsoleCommandSender implements CommandSender
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
+public final class ConsoleCommandSender implements CommandSender
 {
 
     @Getter
     private static final ConsoleCommandSender instance = new ConsoleCommandSender();
-
-    private ConsoleCommandSender()
-    {
-    }
 
     @Override
     public void sendMessage(String message)
@@ -32,6 +32,18 @@ public class ConsoleCommandSender implements CommandSender
         {
             sendMessage( message );
         }
+    }
+
+    @Override
+    public void sendMessage(BaseComponent... message)
+    {
+        sendMessage( BaseComponent.toLegacyText( message ) );
+    }
+
+    @Override
+    public void sendMessage(BaseComponent message)
+    {
+        sendMessage( message.toLegacyText() );
     }
 
     @Override
@@ -68,5 +80,11 @@ public class ConsoleCommandSender implements CommandSender
     public void setPermission(String permission, boolean value)
     {
         throw new UnsupportedOperationException( "Console has all permissions" );
+    }
+
+    @Override
+    public Collection<String> getPermissions()
+    {
+        return Collections.emptySet();
     }
 }

@@ -1,19 +1,26 @@
 BungeeCord
 ==========
-The most reliable Minecraft server portal suite.
-------------------------------------------------
-BungeeCord is a piece of Java software which allows a user to link multiple Minecraft servers together, allowing players to teleport between them and access advanced features. This makes it perfect for servers looking to expand their player base and spread across multiple gameplay styles.
+Layer 7 proxy designed to link Minecraft servers.
+--------------------------------------------------
 
-History
--------
-For a long time developers have tried to create these mythical 'cloud' systems as outlined above. Until now, none of them have succeeded in making a fully open source and reliable 'cloud'. You may have already noticed my quoting of the word 'cloud', and this is one of the last times you will see it in this document. BungeeCord is **NOT** a 'cloud'. The actual meaning of the aforementioned word is quoted below:
+BungeeCord is a sophisticated proxy and API designed mainly to teleport players between multiple Minecraft servers. It is the latest incarnation of similar software written by the author from 2011-present.
 
->The use of computing resources (hardware and software) that are delivered as a service over a network (typically the Internet).
+Information
+-----------
+BungeeCord is maintained by [SpigotMC](https://www.spigotmc.org/) and has its own [discussion thread](https://www.spigotmc.org/go/bungeecord) with plenty of helpful information and links.
 
-BungeeCord does not do this and therefore is not a 'cloud'. Please do not refer to it as one, since the owners and operators of real clouds will get very angry, and you will be seen as ignorant and stupid. Instead I encourage you to use the term 'Server Port Suite' or something to that effect.
+### Security warning
 
-Installation & Usage
---------------------
-For and in depth guide to the installation and usage of BungeeCord you should check the current primary download location. The current link is provided below for your convenience.
+As your Minecraft servers have to run without authentication (online-mode=false) for BungeeCord to work, this poses a new security risk. Users may connect to your servers directly, under any username they wish to use. The kick "If you wish to use IP forwarding, please enable it in your BungeeCord config as well!" does not protect your Spigot servers.
 
-<http://www.spigotmc.org/threads/bungeecord.392/>
+To combat this, you need to restrict access to these servers for example with a firewall (please see [firewall guide](https://www.spigotmc.org/wiki/firewall-guide/)).
+
+Source
+------
+Source code is currently available on [GitHub](https://www.spigotmc.org/go/bungeecord-git).
+
+Binaries
+--------
+Precompiled binaries are available for end users on [Jenkins](https://www.spigotmc.org/go/bungeecord-dl).
+
+(c) 2012-2020 SpigotMC Pty. Ltd.

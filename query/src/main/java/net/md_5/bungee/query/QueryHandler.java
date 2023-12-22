@@ -1,15 +1,19 @@
 package net.md_5.bungee.query;
 
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.AddressedEnvelope;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.socket.DatagramPacket;
-import java.nio.ByteOrder;
-import java.util.HashMap;
+import java.net.InetAddress;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
+import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import net.md_5.bungee.api.ProxyServer;
 import net.md_5.bungee.api.config.ListenerInfo;
@@ -23,11 +27,11 @@ public class QueryHandler extends SimpleChannelInboundHandler<DatagramPacket>
     private final ListenerInfo listener;
     /*========================================================================*/
     private final Random random = new Random();
-    private final Map<Integer, Long> sessions = new HashMap<>();
+    private final Cache<InetAddress, QuerySession> sessions = CacheBuilder.newBuilder().expireAfterWrite( 30, TimeUnit.SECONDS ).build();
 
     private void writeShort(ByteBuf buf, int s)
     {
-        buf.order( ByteOrder.LITTLE_ENDIAN ).writeShort( s );
+        buf.writeShortLE( s );
     }
 
     private void writeNumber(ByteBuf buf, int i)
@@ -39,7 +43,7 @@ public class QueryHandler extends SimpleChannelInboundHandler<DatagramPacket>
     {
         for ( char c : s.toCharArray() )
         {
-            buf.writeChar( c );
+            buf.writeByte( c );
         }
         buf.writeByte( 0x00 );
     }
@@ -47,10 +51,22 @@ public class QueryHandler extends SimpleChannelInboundHandler<DatagramPacket>
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, DatagramPacket msg) throws Exception
     {
-        ByteBuf in = msg.content();
-        if ( in.readUnsignedByte() != 0xFE && in.readUnsignedByte() != 0xFD )
+        try
         {
-            throw new IllegalStateException( "Incorrect magic!" );
+            handleMessage( ctx, msg );
+        } catch ( Throwable t )
+        {
+            bungee.getLogger().log( Level.WARNING, "Error whilst handling query packet from " + msg.sender(), t );
+        }
+    }
+
+    private void handleMessage(ChannelHandlerContext ctx, DatagramPacket msg)
+    {
+        ByteBuf in = msg.content();
+        if ( in.readUnsignedByte() != 0xFE || in.readUnsignedByte() != 0xFD )
+        {
+            bungee.getLogger().log( Level.WARNING, "Query - Incorrect magic!: {0}", msg.sender() );
+            return;
         }
 
         ByteBuf out = ctx.alloc().buffer();
@@ -65,16 +81,16 @@ public class QueryHandler extends SimpleChannelInboundHandler<DatagramPacket>
             out.writeInt( sessionId );
 
             int challengeToken = random.nextInt();
-            sessions.put( challengeToken, System.currentTimeMillis() );
+            sessions.put( msg.sender().getAddress(), new QuerySession( challengeToken, System.currentTimeMillis() ) );
 
             writeNumber( out, challengeToken );
         }
 
         if ( type == 0x00 )
         {
-            int challengeToken = out.readInt();
-            Long session = sessions.get( challengeToken );
-            if ( session == null || System.currentTimeMillis() - session > TimeUnit.SECONDS.toMillis( 30 ) )
+            int challengeToken = in.readInt();
+            QuerySession session = sessions.getIfPresent( msg.sender().getAddress() );
+            if ( session == null || session.getToken() != challengeToken )
             {
                 throw new IllegalStateException( "No session!" );
             }
@@ -92,18 +108,21 @@ public class QueryHandler extends SimpleChannelInboundHandler<DatagramPacket>
                 writeNumber( out, listener.getMaxPlayers() ); // Max Players
                 writeShort( out, listener.getHost().getPort() ); // Port
                 writeString( out, listener.getHost().getHostString() ); // IP
-            } else if ( in.readableBytes() == 8 )
+            } else if ( in.readableBytes() == 4 )
             {
                 // Long Response
-                out.writeBytes( new byte[ 11 ] );
-                Map<String, String> data = new HashMap<>();
+                out.writeBytes( new byte[]
+                {
+                    0x73, 0x70, 0x6C, 0x69, 0x74, 0x6E, 0x75, 0x6D, 0x00, (byte) 0x80, 0x00
+                } );
+                Map<String, String> data = new LinkedHashMap<>();
 
                 data.put( "hostname", listener.getMotd() );
                 data.put( "gametype", "SMP" );
                 // Start Extra Info
                 data.put( "game_id", "MINECRAFT" );
                 data.put( "version", bungee.getGameVersion() );
-                // data.put( "plugins","");
+                data.put( "plugins", "" );
                 // End Extra Info
                 data.put( "map", "BungeeCord_Proxy" );
                 data.put( "numplayers", Integer.toString( bungee.getOnlineCount() ) );
@@ -115,12 +134,11 @@ public class QueryHandler extends SimpleChannelInboundHandler<DatagramPacket>
                 {
                     writeString( out, entry.getKey() );
                     writeString( out, entry.getValue() );
-
                 }
-                out.writeByte( 0x00 ); // Null                
+                out.writeByte( 0x00 ); // Null
 
                 // Padding
-                out.writeBytes( new byte[ 10 ] );
+                writeString( out, "\01player_\00" );
                 // Player List
                 for ( ProxiedPlayer p : bungee.getPlayers() )
                 {
@@ -135,5 +153,19 @@ public class QueryHandler extends SimpleChannelInboundHandler<DatagramPacket>
         }
 
         ctx.writeAndFlush( response );
+    }
+
+    @Override
+    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception
+    {
+        bungee.getLogger().log( Level.WARNING, "Error whilst handling query packet from " + ctx.channel().remoteAddress(), cause );
+    }
+
+    @Data
+    private static class QuerySession
+    {
+
+        private final int token;
+        private final long time;
     }
 }
