@@ -1,6 +1,7 @@
 package net.md_5.bungee;
 
 import java.net.InetSocketAddress;
+import java.util.Collection;
 
 /**
  * Series of utility classes to perform various operations.
@@ -28,27 +29,6 @@ public class Util
     }
 
     /**
-     * Normalizes a config path by prefix upper case letters with '_' and
-     * turning them to lowercase.
-     *
-     * @param s the string to normalize
-     * @return the normalized path
-     */
-    public static String normalize(String s)
-    {
-        StringBuilder result = new StringBuilder();
-        for ( char c : s.toCharArray() )
-        {
-            if ( Character.isUpperCase( c ) )
-            {
-                result.append( "_" );
-            }
-            result.append( Character.toLowerCase( c ) );
-        }
-        return result.toString();
-    }
-
-    /**
      * Formats an integer as a hex value.
      *
      * @param i the integer to format
@@ -68,6 +48,26 @@ public class Util
      */
     public static String exception(Throwable t)
     {
-        return t.getClass().getSimpleName() + " : " + t.getMessage() + " @ " + t.getStackTrace()[0].getClassName() + ":" + t.getStackTrace()[0].getLineNumber();
+        // TODO: We should use clear manually written exceptions
+        StackTraceElement[] trace = t.getStackTrace();
+        return t.getClass().getSimpleName() + " : " + t.getMessage()
+                + ( ( trace.length > 0 ) ? " @ " + t.getStackTrace()[0].getClassName() + ":" + t.getStackTrace()[0].getLineNumber() : "" );
+    }
+
+    public static String csv(Collection<?> objects)
+    {
+        return format( objects, ", " );
+    }
+
+    public static String format(Collection<?> objects, String separators)
+    {
+        StringBuilder ret = new StringBuilder();
+        for ( Object o : objects )
+        {
+            ret.append( o );
+            ret.append( separators );
+        }
+
+        return ( ret.length() == 0 ) ? "" : ret.substring( 0, ret.length() - separators.length() );
     }
 }
