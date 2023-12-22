@@ -1,0 +1,49 @@
+name: Maven Build
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        java: [8, 11, 17, 21]
+
+    name: Java ${{ matrix.java }}
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-java@v4
+      with:
+        distribution: zulu
+        java-version: ${{ matrix.java }}
+    - run: java -version && mvn --version
+    - run: mvn install
+    - run: mvn package
+    - name: Get JAR
+      id: get-jar
+      run: |
+        JAR_PATH=$(ls proxy/*.jar)
+        echo "JAR_NAME=$(basename $JAR_PATH)" >> $GITHUB_OUTPUT
+    - name: Create Release
+      id: create-release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{github.run_number}}
+        release_name: Release v${{github.run_number}}
+        draft: false
+        prerelease: false
+    - name: Upload Release
+      id: upload-release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create-release.outputs.upload_url }} 
+        asset_path: ./build/libs/${{ steps.get-jar.outputs.JAR_NAME }}
+        asset_name: ${{ steps.get-jar.outputs.JAR_NAME }}
+        asset_content_type: application/java-archive
